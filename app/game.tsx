@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  BotDifficulty, canAfford, describeMerchant, GameAction, GameState, MerchantCard, MERCHANT_CARDS,
+  ActionEvent, BotDifficulty, canAfford, describeMerchant, GameAction, GameState, MerchantCard, MERCHANT_CARDS,
   ORDER_CARDS, scorePlayer, Spice, Spices, SPICE_NAMES, zeroSpices,
 } from "../lib/game";
 
@@ -56,6 +56,22 @@ function OrderFace({ orderId }: { orderId: string }) {
   </>;
 }
 
+function ActionReveal({ event }: { event: ActionEvent }) {
+  const card = event.cardId ? MERCHANT_CARDS[event.cardId] : null;
+  const label = event.type === "PLAY" ? "打出商人牌" : event.type === "ACQUIRE" ? "从市场招募" : event.type === "CLAIM" ? "完成订单" : "休息并收回手牌";
+  const upgradePath = event.upgrades?.map((tier) => `${SPICE_NAMES[tier]}→${SPICE_NAMES[tier + 1]}`).join("、");
+  const detail = event.times && event.times > 1 ? `连续交易 ${event.times} 次` : upgradePath || (event.upgradeCount ? `升级 ${event.upgradeCount} 次` : "");
+  return <div className="action-reveal" role="status" aria-live="polite">
+    <section className={`action-stage action-${event.type.toLowerCase()}`}>
+      <div className="action-player"><span className="avatar" style={{ background: event.playerColor }}>{event.playerName.slice(0, 1)}</span><div><b>{event.playerName}</b><small>{label}</small></div></div>
+      {card && <div className={`merchant-card card-${card.type} reveal-card-face`}><MerchantFace card={card} /></div>}
+      {event.orderId && <div className="order-card reveal-order"><OrderFace orderId={event.orderId} /></div>}
+      {event.type === "REST" && <div className="rest-reveal"><span>☾</span><b>收回全部商人牌</b></div>}
+      {detail && <span className="action-detail">{detail}</span>}
+    </section>
+  </div>;
+}
+
 export default function Game() {
   const [room, setRoom] = useState<RoomResponse | null>(null);
   const [name, setName] = useState("");
@@ -66,11 +82,15 @@ export default function Game() {
   const [modal, setModal] = useState<Modal | null>(null);
   const [copied, setCopied] = useState(false);
   const [visualTheme, setVisualTheme] = useState<VisualTheme>("celadon");
+  const [actionQueue, setActionQueue] = useState<ActionEvent[]>([]);
+  const [activeEvent, setActiveEvent] = useState<ActionEvent | null>(null);
+  const observedEventId = useRef<number | null>(null);
+  const observedRoomCode = useRef<string | null>(null);
 
   const token = typeof window !== "undefined" ? localStorage.getItem(`silk-token-${room?.code}`) ?? "" : "";
   const me = room?.state.players.find((p) => p.id === localStorage.getItem(`silk-player-${room?.code}`));
   const myIndex = room?.state.players.findIndex((p) => p.id === me?.id) ?? -1;
-  const isMyTurn = room?.state.status === "playing" && room.state.currentPlayer === myIndex;
+  const isMyTurn = room?.state.status === "playing" && room.state.currentPlayer === myIndex && !activeEvent && actionQueue.length === 0;
 
   const request = useCallback(async (body: Record<string, unknown>) => {
     setBusy(true); setError("");
@@ -116,6 +136,35 @@ export default function Game() {
     const timer = window.setInterval(() => refresh(room.code, true), 1500);
     return () => window.clearInterval(timer);
   }, [room?.code, refresh]);
+
+  useEffect(() => {
+    if (!room?.code) return;
+    const events = room.state.actionEvents ?? [];
+    const latestId = events.at(-1)?.id ?? 0;
+    if (observedRoomCode.current !== room.code) {
+      observedRoomCode.current = room.code;
+      observedEventId.current = latestId;
+      setActionQueue([]);
+      setActiveEvent(null);
+      return;
+    }
+    const lastSeen = observedEventId.current ?? latestId;
+    const fresh = events.filter((event) => event.id > lastSeen);
+    observedEventId.current = latestId;
+    if (fresh.length) setActionQueue((current) => [...current, ...fresh.filter((event) => !current.some((queued) => queued.id === event.id))]);
+  }, [room?.code, room?.state.actionEvents]);
+
+  useEffect(() => {
+    if (activeEvent || !actionQueue.length) return;
+    setActiveEvent(actionQueue[0]);
+    setActionQueue((current) => current.slice(1));
+  }, [activeEvent, actionQueue]);
+
+  useEffect(() => {
+    if (!activeEvent) return;
+    const timer = window.setTimeout(() => setActiveEvent(null), 1100);
+    return () => window.clearTimeout(timer);
+  }, [activeEvent]);
 
   const sendAction = async (action: GameAction) => {
     if (!room) return;
@@ -271,6 +320,7 @@ export default function Game() {
 
     <aside className="game-log"><b>商路动态</b>{state.log.slice(-7).reverse().map((line, i) => <p key={`${line}-${i}`}>{line}</p>)}</aside>
     {error && <div className="toast" onClick={() => setError("")}>{error}</div>}
+    {activeEvent && <ActionReveal key={activeEvent.id} event={activeEvent} />}
     {modal && <ActionModal modal={modal} setModal={setModal} meSpices={me.spices} onConfirm={sendAction} busy={busy} />}
     {state.status === "finished" && <div className="result-backdrop"><section className="result-card"><p className="eyebrow">商路结算</p><h1>{state.winnerIds.includes(me.id) ? "你赢得了商路盛誉" : `${ranking[0].name} 赢得了胜利`}</h1>
       <div className="ranking">{ranking.map((p, i) => <div className={state.winnerIds.includes(p.id) ? "winner" : ""} key={p.id}><span>{i + 1}</span><i className="avatar" style={{ background: p.color }}>{p.name.slice(0, 1)}</i><b>{p.name}</b><small>{p.orders.length} 张订单</small><strong>{scorePlayer(p)} 分</strong></div>)}</div>

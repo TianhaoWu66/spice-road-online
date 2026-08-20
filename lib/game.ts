@@ -9,6 +9,18 @@ export type MerchantCard =
 
 export type OrderCard = { id: string; cost: Spices; points: number };
 export type MarketSlot = { cardId: string; bonus: Spices };
+export type ActionEvent = {
+  id: number;
+  playerId: string;
+  playerName: string;
+  playerColor: string;
+  type: "PLAY" | "ACQUIRE" | "CLAIM" | "REST";
+  cardId?: string;
+  orderId?: string;
+  times?: number;
+  upgradeCount?: number;
+  upgrades?: Spice[];
+};
 
 export type Player = {
   id: string;
@@ -41,6 +53,8 @@ export type GameState = {
   finalRound: boolean;
   winnerIds: string[];
   log: string[];
+  actionEvents?: ActionEvent[];
+  nextActionEventId?: number;
 };
 
 export type GameAction =
@@ -113,6 +127,7 @@ export function createLobby(hostName: string, maxPlayers: number, token: string)
     status: "lobby", maxPlayers, hostId: host.id, players: [host], merchantDeck: [],
     orderDeck: [], merchantMarket: [], orderMarket: [], goldSupply: 0, silverSupply: 0,
     currentPlayer: 0, round: 1, finalRound: false, winnerIds: [], log: [`${hostName} 创建了商队`],
+    actionEvents: [], nextActionEventId: 1,
   };
 }
 
@@ -228,6 +243,14 @@ function finishTurn(state: GameState) {
   if (wasLast) state.round += 1;
 }
 
+function recordAction(state: GameState, player: Player, event: Omit<ActionEvent, "id" | "playerId" | "playerName" | "playerColor">) {
+  const events = state.actionEvents ?? [];
+  const id = state.nextActionEventId ?? ((events.at(-1)?.id ?? 0) + 1);
+  events.push({ id, playerId: player.id, playerName: player.name, playerColor: player.color, ...event });
+  state.actionEvents = events.slice(-20);
+  state.nextActionEventId = id + 1;
+}
+
 export function applyGameAction(state: GameState, playerId: string, action: GameAction): GameState {
   if (state.status !== "playing") throw new Error("游戏不在进行中");
   const player = state.players[state.currentPlayer];
@@ -238,6 +261,7 @@ export function applyGameAction(state: GameState, playerId: string, action: Game
     player.hand.push(...player.played);
     player.played = [];
     state.log.push(`${player.name} 休息并收回全部商人牌`);
+    recordAction(state, player, { type: "REST" });
   }
 
   if (action.type === "PLAY") {
@@ -263,6 +287,12 @@ export function applyGameAction(state: GameState, playerId: string, action: Game
       }
       state.log.push(`${player.name} 升级了 ${choices.length} 个香料`);
     }
+    recordAction(state, player, {
+      type: "PLAY", cardId: action.cardId,
+      times: card.type === "trade" ? Math.max(1, Math.floor(action.times ?? 1)) : undefined,
+      upgradeCount: card.type === "upgrade" ? (action.upgrades?.length ?? 0) : undefined,
+      upgrades: card.type === "upgrade" ? action.upgrades : undefined,
+    });
     player.hand = player.hand.filter((id) => id !== action.cardId);
     player.played.push(action.cardId);
     autoDiscard(player, state);
@@ -284,6 +314,7 @@ export function applyGameAction(state: GameState, playerId: string, action: Game
     if (next) state.merchantMarket.push({ cardId: next, bonus: zeroSpices() });
     autoDiscard(player, state);
     state.log.push(`${player.name} 招募了一名新商人`);
+    recordAction(state, player, { type: "ACQUIRE", cardId: selected.cardId });
   }
 
   if (action.type === "CLAIM") {
@@ -303,6 +334,7 @@ export function applyGameAction(state: GameState, playerId: string, action: Game
       state.log.push("订单牌堆已经取完，本轮结束后结算");
     }
     state.log.push(`${player.name} 完成了价值 ${order.points} 分的订单`);
+    recordAction(state, player, { type: "CLAIM", orderId });
     const target = state.players.length <= 3 ? 6 : 5;
     if (player.orders.length >= target) {
       state.finalRound = true;
