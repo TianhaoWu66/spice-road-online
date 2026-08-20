@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActionEvent, BotDifficulty, canAfford, CARD_CATALOG_READY, CHAT_PHRASES, ChatEvent, ChatPhrase, describeMerchant, GameAction, GameState, MerchantCard, MERCHANT_CARDS,
   ORDER_CARDS, scorePlayer, Spice, Spices, SPICE_NAMES, zeroSpices,
-  addBot, addPlayer, applyGameAction, createLobby, removeBot, runBotTurns, sendChat, startGame,
+  addBot, addPlayer, applyGameAction, chooseBotAction, createLobby, removeBot, runBotTurns, sendChat, startGame,
 } from "../lib/game";
 import { PROFILE_AVATARS, ProfileAvatar } from "../lib/profile";
 import {
@@ -147,7 +147,7 @@ export default function Game() {
   const [localState, setLocalState] = useState<GameState | null>(null);
   const [localPass, setLocalPass] = useState(false);
   const [localAddName, setLocalAddName] = useState("");
-  const lastLocalActor = useRef<string | null>(null);
+  const [botThinking, setBotThinking] = useState(false);
   const [hotspotRole, setHotspotRole] = useState<HotspotRole>("off");
   const [hostPairings, setHostPairings] = useState<HostPairing[]>([]);
   const [hostConnections, setHostConnections] = useState<Array<{ id: string; name: string }>>([]);
@@ -433,6 +433,32 @@ export default function Game() {
     } finally { setBusy(false); }
   };
 
+  const resolveBotTurnsLocal = useCallback(async (initial: GameState) => {
+    let current = initial;
+    for (let guard = 0; guard < 20; guard++) {
+      if (current.status !== "playing") break;
+      const bot = current.players[current.currentPlayer];
+      if (!bot?.isBot) break;
+      setBotThinking(true);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const next = structuredClone(current) as GameState;
+      const b = next.players[next.currentPlayer];
+      if (!b?.isBot) break;
+      try {
+        const action = chooseBotAction(next);
+        applyGameAction(next, b.id, action);
+      } catch { break; }
+      commitLocal(next);
+      current = next;
+    }
+    setBotThinking(false);
+    if (current.status === "playing") {
+      const humanCount = current.players.filter((p) => !p.isBot).length;
+      const nextActor = current.players[current.currentPlayer];
+      setLocalPass(humanCount > 1 && nextActor && !nextActor.isBot);
+    }
+  }, [commitLocal]);
+
   const localRequest = useCallback(async (body: Record<string, unknown>) => {
     if (!localState) return null;
     setBusy(true); setError("");
@@ -462,7 +488,6 @@ export default function Game() {
         startGame(next);
         runBotTurns(next);
         commitLocal(next);
-        lastLocalActor.current = null;
         setLocalPass(hotspotRole === "off" && next.status === "playing" && next.players.filter((p) => !p.isBot).length > 1);
         return { code: "LOCAL", version: 0, state: next } as RoomResponse;
       }
@@ -470,13 +495,19 @@ export default function Game() {
       if (!actor || actor.isBot) throw new Error("还没轮到你");
       if (command === "action" && body.action) {
         applyGameAction(next, actor.id, body.action as GameAction);
+        const isLocalHotSeat = localMode && hotspotRole === "off";
+        if (isLocalHotSeat && next.status === "playing" && next.players[next.currentPlayer]?.isBot) {
+          // 本地同屏：人机逐个"思考"再出牌，避免决策过快
+          commitLocal(next);
+          await resolveBotTurnsLocal(next);
+          return { code: "LOCAL", version: 0, state: next } as RoomResponse;
+        }
         runBotTurns(next);
         commitLocal(next);
         const humanCount = next.players.filter((p) => !p.isBot).length;
         const nextActor = next.players[next.currentPlayer];
-        const handoff = next.status === "playing" && humanCount > 1 && nextActor && !nextActor.isBot && nextActor.id !== lastLocalActor.current;
+        const handoff = next.status === "playing" && humanCount > 1 && nextActor && !nextActor.isBot && nextActor.id !== actor.id;
         setLocalPass(hotspotRole === "off" && handoff);
-        lastLocalActor.current = actor.id;
         return { code: "LOCAL", version: 0, state: next } as RoomResponse;
       }
       if (command === "chat" && body.phrase) {
@@ -489,7 +520,7 @@ export default function Game() {
       setError(e instanceof Error ? e.message : "操作失败");
       return null;
     } finally { setBusy(false); }
-  }, [localState, commitLocal, hotspotRole]);
+  }, [localState, commitLocal, hotspotRole, localMode, resolveBotTurnsLocal]);
 
   const request = useCallback(async (body: Record<string, unknown>) => {
     if (hotspotRole === "player") return playerRequest(body);
@@ -825,6 +856,16 @@ export default function Game() {
   if (!CARD_CATALOG_READY) {
     return <main className={`catalog-shell theme-${visualTheme}`}>
       <section className="catalog-empty-state"><div className="empty-card-stack"><i /><i /><i /></div><p className="eyebrow">卡牌库整理中</p><h1>所有旧卡已移除</h1><p>当前对局已暂停。等待新卡片按顺序录入后，即可重新开始游戏。</p><button className="primary" onClick={exitGame}>返回首页</button></section>
+    </main>;
+  }
+
+  if (botThinking) {
+    return <main className={`lobby-shell theme-${visualTheme}`}>
+      <section className="bot-thinking">
+        <div className="bot-avatar">🤖</div>
+        <h2>AI 思考中…</h2>
+        <p>人机正在决定行动，请稍候</p>
+      </section>
     </main>;
   }
 

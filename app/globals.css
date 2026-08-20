@@ -461,3 +461,9 @@ input, select { border: 1px solid #d7c6aa; background: #fffdf7; color: var(--ink
 /* 房主代管按钮 */
 .afk-kick { padding: 3px 10px; font-size: 12px; border-radius: 999px; border: 1px solid rgba(255,255,255,.3); background: rgba(113,56,47,.4); color: #fff8e8; cursor: pointer; white-space: nowrap; }
 .afk-kick:hover { background: rgba(113,56,47,.65); }
+
+/* AI 思考中 */
+.bot-thinking { min-height: 72vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; padding: 32px; }
+.bot-thinking .bot-avatar { font-size: 56px; }
+.bot-thinking h2 { margin: 0; font-size: 28px; }
+.bot-thinking p { color: rgba(255,248,232,.72); margin: 0; }
