@@ -7,6 +7,7 @@ import {
 } from "../lib/game";
 
 type RoomResponse = { code: string; version: number; token?: string; state: GameState; error?: string };
+type VisualTheme = "parchment" | "night" | "celadon";
 type Modal =
   | { kind: "trade"; cardId: string; times: number }
   | { kind: "upgrade"; cardId: string; choices: Spice[] }
@@ -14,6 +15,7 @@ type Modal =
 
 const spiceClass = ["yellow", "red", "green", "brown"];
 const botLabels: Record<BotDifficulty, string> = { easy: "简单", normal: "普通", hard: "困难" };
+const themeLabels: Record<VisualTheme, string> = { parchment: "羊皮纸", night: "夜市", celadon: "青瓷" };
 
 function SpiceRow({ values, compact = false }: { values: Spices; compact?: boolean }) {
   return <div className={`spice-row ${compact ? "compact" : ""}`}>
@@ -28,9 +30,15 @@ function SpiceRow({ values, compact = false }: { values: Spices; compact?: boole
 
 function Arrow() { return <span className="trade-arrow">→</span>; }
 
+function ThemeSwitcher({ value, onChange }: { value: VisualTheme; onChange: (value: VisualTheme) => void }) {
+  return <div className="theme-switcher" aria-label="卡牌风格">
+    {(Object.keys(themeLabels) as VisualTheme[]).map((theme) => <button aria-pressed={value === theme} title={`${themeLabels[theme]}风格`} key={theme} onClick={() => onChange(theme)}><i />{themeLabels[theme]}</button>)}
+  </div>;
+}
+
 function MerchantFace({ card, bonus }: { card: MerchantCard; bonus?: Spices }) {
   return <>
-    <div className="card-kicker">{describeMerchant(card)}</div>
+    <div className="card-kicker"><span className="card-type-icon">{card.type === "produce" ? "✦" : card.type === "upgrade" ? "◆" : "⇄"}</span>{describeMerchant(card)}</div>
     <div className="card-rule">
       {card.type === "produce" && <SpiceRow values={card.gain} />}
       {card.type === "upgrade" && <div className="upgrade-symbol"><span>◆</span><Arrow /><span>◆+</span><b>×{card.amount}</b></div>}
@@ -57,6 +65,7 @@ export default function Game() {
   const [error, setError] = useState("");
   const [modal, setModal] = useState<Modal | null>(null);
   const [copied, setCopied] = useState(false);
+  const [visualTheme, setVisualTheme] = useState<VisualTheme>("celadon");
 
   const token = typeof window !== "undefined" ? localStorage.getItem(`silk-token-${room?.code}`) ?? "" : "";
   const me = room?.state.players.find((p) => p.id === localStorage.getItem(`silk-player-${room?.code}`));
@@ -188,8 +197,8 @@ export default function Game() {
 
   if (room.state.status === "lobby") {
     const isHost = me.id === room.state.hostId;
-    return <main className="lobby-shell">
-      <header className="topbar"><div className="wordmark">香料商路</div><button className="room-code" onClick={copyInvite}><small>房间码</small>{room.code}<span>{copied ? "已复制" : "复制邀请"}</span></button></header>
+    return <main className={`lobby-shell theme-${visualTheme}`}>
+      <header className="topbar"><div className="wordmark">香料商路</div><div className="header-actions"><ThemeSwitcher value={visualTheme} onChange={setVisualTheme} /><button className="room-code" onClick={copyInvite}><small>房间码</small>{room.code}<span>{copied ? "已复制" : "复制邀请"}</span></button></div></header>
       <section className="lobby-panel">
         <p className="eyebrow">等待商队集结</p><h1>{room.state.players.length} / {room.state.maxPlayers} 位玩家</h1>
         <div className="seats">
@@ -217,11 +226,11 @@ export default function Game() {
   const current = state.players[state.currentPlayer];
   const ranking = [...state.players].sort((a, b) => scorePlayer(b) - scorePlayer(a));
 
-  return <main className="game-shell">
+  return <main className={`game-shell theme-${visualTheme}`}>
     <header className="game-header">
       <div className="wordmark">香料商路</div>
       <div className="round-info"><span>第 {state.round} 轮</span><b>{state.status === "finished" ? "结算" : isMyTurn ? "轮到你行动" : `等待 ${current.name}`}</b>{state.finalRound && <em>最后一轮</em>}</div>
-      <button className="room-code mini" onClick={copyInvite}><small>房间</small>{state.status === "finished" ? "战报" : room.code}</button>
+      <div className="header-actions"><ThemeSwitcher value={visualTheme} onChange={setVisualTheme} /><button className="room-code mini" onClick={copyInvite}><small>房间</small>{state.status === "finished" ? "战报" : room.code}</button></div>
     </header>
 
     <aside className="players-panel">
@@ -244,7 +253,7 @@ export default function Game() {
 
       <div className="market-heading merchant-title"><div><span>商人市场</span><small>越靠右，招募费用越高</small></div></div>
       <div className="merchant-row">
-        {state.merchantMarket.map((slot, index) => <button className="merchant-card market-card" disabled={!isMyTurn} key={slot.cardId} onClick={() => acquire(index)}>
+        {state.merchantMarket.map((slot, index) => <button className={`merchant-card market-card card-${MERCHANT_CARDS[slot.cardId].type}`} disabled={!isMyTurn} key={slot.cardId} onClick={() => acquire(index)}>
           <span className="market-cost">{index === 0 ? "免费" : `支付 ${index}`}</span>
           <MerchantFace card={MERCHANT_CARDS[slot.cardId]} bonus={slot.bonus} />
         </button>)}
@@ -254,7 +263,7 @@ export default function Game() {
     <section className="hand-panel">
       <div className="hand-head"><div><span>你的商队</span><SpiceRow values={me.spices} /></div><div className="wallet"><span className="coin gold">{me.gold}</span><span className="coin silver">{me.silver}</span></div></div>
       <div className="hand-row">
-        {me.hand.map((cardId) => <button className="merchant-card hand-card" disabled={!isMyTurn} key={cardId} onClick={() => handleCard(cardId)}><MerchantFace card={MERCHANT_CARDS[cardId]} /></button>)}
+        {me.hand.map((cardId) => <button className={`merchant-card hand-card card-${MERCHANT_CARDS[cardId].type}`} disabled={!isMyTurn} key={cardId} onClick={() => handleCard(cardId)}><MerchantFace card={MERCHANT_CARDS[cardId]} /></button>)}
         {!me.hand.length && <div className="empty-hand">手牌已全部打出</div>}
       </div>
       <button className="rest-button" disabled={!isMyTurn || !me.played.length} onClick={() => sendAction({ type: "REST" })}><span>☾</span>休息并收回 {me.played.length} 张牌</button>
