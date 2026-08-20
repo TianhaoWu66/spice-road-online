@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  canAfford, describeMerchant, GameAction, GameState, MerchantCard, MERCHANT_CARDS,
+  BotDifficulty, canAfford, describeMerchant, GameAction, GameState, MerchantCard, MERCHANT_CARDS,
   ORDER_CARDS, scorePlayer, Spice, Spices, SPICE_NAMES, zeroSpices,
 } from "../lib/game";
 
@@ -13,6 +13,7 @@ type Modal =
   | { kind: "acquire"; marketIndex: number; payment: Spices };
 
 const spiceClass = ["yellow", "red", "green", "brown"];
+const botLabels: Record<BotDifficulty, string> = { easy: "简单", normal: "普通", hard: "困难" };
 
 function SpiceRow({ values, compact = false }: { values: Spices; compact?: boolean }) {
   return <div className={`spice-row ${compact ? "compact" : ""}`}>
@@ -196,10 +197,15 @@ export default function Game() {
             const player = room.state.players[i];
             return <div className={`seat ${player ? "filled" : ""}`} key={i}>
               <span className="avatar" style={{ background: player?.color }}>{player ? player.name.slice(0, 1) : i + 1}</span>
-              <div><b>{player?.name ?? "等待加入"}</b><small>{player?.id === room.state.hostId ? "房主" : player ? "已就绪" : "空席位"}</small></div>
+              <div><b>{player?.name ?? "等待加入"}</b><small>{player?.id === room.state.hostId ? "房主" : player?.isBot ? `${botLabels[player.botDifficulty ?? "normal"]}人机` : player ? "已就绪" : "空席位"}</small></div>
+              {isHost && player?.isBot && <button className="remove-bot" disabled={busy} onClick={() => request({ command: "removeBot", code: room.code, token, botId: player.id })}>移除</button>}
             </div>;
           })}
         </div>
+        {isHost && <div className="bot-controls">
+          <div><b>添加人机对手</b><small>可与真人混合对战</small></div>
+          {(["easy", "normal", "hard"] as BotDifficulty[]).map((difficulty) => <button key={difficulty} disabled={busy || room.state.players.length >= room.state.maxPlayers} onClick={() => request({ command: "addBot", code: room.code, token, difficulty })}>{botLabels[difficulty]}</button>)}
+        </div>}
         {isHost ? <button className="primary start-button" disabled={busy || room.state.players.length < 2} onClick={() => request({ command: "start", code: room.code, token })}>开始游戏</button>
           : <div className="waiting-pulse"><i />等待房主开始游戏</div>}
         {error && <div className="error-box">{error}</div>}
@@ -221,7 +227,7 @@ export default function Game() {
     <aside className="players-panel">
       {state.players.map((p, index) => <div className={`player-strip ${index === state.currentPlayer && state.status === "playing" ? "active" : ""} ${p.id === me.id ? "me" : ""}`} key={p.id}>
         <span className="avatar" style={{ background: p.color }}>{p.name.slice(0, 1)}</span>
-        <div className="player-meta"><b>{p.name}{p.id === me.id && <small> 你</small>}</b><SpiceRow values={p.spices} compact /></div>
+        <div className="player-meta"><b>{p.name}{p.id === me.id && <small> 你</small>}{p.isBot && <small> · {botLabels[p.botDifficulty ?? "normal"]}人机</small>}</b><SpiceRow values={p.spices} compact /></div>
         <div className="player-score"><b>{p.orders.length}</b><small>订单</small></div>
       </div>)}
     </aside>

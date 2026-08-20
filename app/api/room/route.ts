@@ -1,5 +1,8 @@
 import { env } from "cloudflare:workers";
-import { addPlayer, applyGameAction, createLobby, GameAction, GameState, startGame } from "../../../lib/game";
+import {
+  addBot, addPlayer, applyGameAction, BotDifficulty, createLobby, GameAction, GameState,
+  removeBot, runBotTurns, startGame,
+} from "../../../lib/game";
 
 const schemaSql = `CREATE TABLE IF NOT EXISTS rooms (
   code TEXT PRIMARY KEY NOT NULL,
@@ -18,7 +21,11 @@ function cleanCode(value: unknown) {
 }
 
 function publicState(state: GameState) {
-  return { ...state, players: state.players.map(({ token: _token, ...player }) => player) };
+  return { ...state, players: state.players.map((player) => {
+    const publicPlayer = { ...player };
+    delete publicPlayer.token;
+    return publicPlayer;
+  }) };
 }
 
 async function loadRoom(code: string) {
@@ -54,9 +61,9 @@ export async function POST(request: Request) {
   try {
     await ensureSchema();
     const body = await request.json() as {
-      command?: "create" | "join" | "start" | "action";
+      command?: "create" | "join" | "addBot" | "removeBot" | "start" | "action";
       code?: string; name?: string; token?: string; maxPlayers?: number;
-      action?: GameAction;
+      action?: GameAction; difficulty?: BotDifficulty; botId?: string;
     };
     const name = String(body.name ?? "").trim().slice(0, 12);
     const token = String(body.token ?? "");
@@ -87,11 +94,19 @@ export async function POST(request: Request) {
 
     const player = room.state.players.find((p) => p.token === token);
     if (!player) throw new Error("玩家身份已失效，请重新加入");
-    if (body.command === "start") {
+    if (body.command === "addBot") {
+      if (player.id !== room.state.hostId) throw new Error("只有房主可以添加人机");
+      addBot(room.state, body.difficulty ?? "normal");
+    } else if (body.command === "removeBot") {
+      if (player.id !== room.state.hostId) throw new Error("只有房主可以移除人机");
+      removeBot(room.state, String(body.botId ?? ""));
+    } else if (body.command === "start") {
       if (player.id !== room.state.hostId) throw new Error("只有房主可以开始");
       startGame(room.state);
+      runBotTurns(room.state);
     } else if (body.command === "action" && body.action) {
       applyGameAction(room.state, player.id, body.action);
+      runBotTurns(room.state);
     } else {
       throw new Error("未知操作");
     }

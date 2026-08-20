@@ -70,6 +70,15 @@ input, select { border: 1px solid #d7c6aa; background: #fffdf7; color: var(--ink
 .avatar { width: 42px; height: 42px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: white; font: 700 17px system-ui, sans-serif; flex: 0 0 auto; }
 .seat b, .seat small { display: block; }
 .seat small { opacity: .56; margin-top: 3px; font: 11px system-ui, sans-serif; }
+.seat > div { min-width: 0; flex: 1; }
+.remove-bot { margin-left: auto; border: 1px solid rgba(255,255,255,.24); background: transparent; color: #f2d8a9; border-radius: 4px; padding: 6px 9px; cursor: pointer; font: 11px system-ui, sans-serif; }
+.bot-controls { display: grid; grid-template-columns: 1fr repeat(3, 78px); align-items: center; gap: 8px; margin-top: 14px; padding: 12px 14px; border-radius: 6px; background: rgba(0,0,0,.14); text-align: left; }
+.bot-controls b, .bot-controls small { display: block; }
+.bot-controls b { font-size: 13px; }
+.bot-controls small { margin-top: 3px; opacity: .55; font: 10px system-ui, sans-serif; }
+.bot-controls button { height: 36px; border: 1px solid rgba(255,255,255,.24); border-radius: 4px; background: rgba(255,255,255,.08); color: #fff2d8; cursor: pointer; font: 700 12px system-ui, sans-serif; }
+.bot-controls button:hover:not(:disabled) { background: rgba(255,255,255,.16); }
+.bot-controls button:disabled, .remove-bot:disabled { opacity: .35; }
 .start-button { margin-top: 28px; min-width: 230px; }
 .waiting-pulse { margin: 30px auto; font: 13px system-ui, sans-serif; color: rgba(255,255,255,.64); }
 .waiting-pulse i { display: inline-block; width: 8px; height: 8px; background: #e2ad50; border-radius: 50%; margin-right: 9px; animation: pulse 1.3s infinite; }
@@ -191,6 +200,8 @@ input, select { border: 1px solid #d7c6aa; background: #fffdf7; color: var(--ink
   .entry-card { padding: 26px; }
   .landing-shell footer { display: none; }
   .seats { grid-template-columns: 1fr; }
+  .bot-controls { grid-template-columns: repeat(3, 1fr); }
+  .bot-controls > div { grid-column: 1 / -1; }
   .game-shell { min-width: 720px; }
   body:has(.game-shell) { overflow-x: auto; }
 }
