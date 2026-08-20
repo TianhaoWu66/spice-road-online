@@ -66,7 +66,30 @@ input, select { border: 1px solid #d7c6aa; background: #fffdf7; color: var(--ink
 .catalog-notice b { font-size: 14px; }
 .catalog-notice span { color: #876b47; font: 11px system-ui, sans-serif; }
 .text-button { background: transparent !important; color: var(--teal) !important; width: 100%; margin-top: 10px; }
+.entry-card .rules-link { width: 100%; min-height: 44px; margin-top: 14px; border: 1px solid #d7c6aa; background: transparent; color: var(--wine); }
+.entry-card .rules-link span { margin-right: 7px; color: var(--gold); }
+.entry-card .rules-link:hover { border-color: #b58b54; background: #f8edd9; }
 .landing-shell footer { position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%); opacity: .45; font: 11px system-ui, sans-serif; white-space: nowrap; }
+
+.rules-guide-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px; background: rgba(20,13,10,.76); backdrop-filter: blur(7px); }
+.rules-guide { width: min(680px, 100%); max-height: min(820px, calc(100svh - 40px)); display: flex; flex-direction: column; padding: 30px 32px 24px; border: 1px solid #d7bd91; border-radius: 10px; background: #fff9ed; color: var(--ink); box-shadow: 0 38px 110px rgba(0,0,0,.48); }
+.rules-guide > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 17px; border-bottom: 1px solid #e2d3bb; }
+.rules-guide h2 { margin: 0; font-size: 30px; font-weight: 500; }
+.rules-guide .eyebrow { margin-bottom: 5px; }
+.rules-close { flex: 0 0 auto; width: 40px; height: 40px; border: 1px solid #d7c6aa; border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer; font: 25px/1 system-ui, sans-serif; }
+.rules-scroll { overflow-y: auto; padding: 4px 10px 6px 0; overscroll-behavior: contain; }
+.rules-scroll section { padding: 17px 0; border-bottom: 1px solid #eadfcd; }
+.rules-scroll section:last-child { border-bottom: 0; }
+.rules-scroll h3 { margin: 0 0 9px; color: var(--wine); font-size: 17px; }
+.rules-scroll p, .rules-scroll li { color: #62564c; font: 14px/1.75 system-ui, sans-serif; }
+.rules-scroll p { margin: 0; }
+.rules-scroll ol, .rules-scroll ul { margin: 0; padding-left: 22px; }
+.rules-scroll li + li { margin-top: 7px; }
+.rules-scroll b { color: #35281f; }
+.rules-spices { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 11px; }
+.rules-spices span { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid #e1d1b8; border-radius: 20px; background: #fffdf8; color: #5f5348; font: 12px system-ui, sans-serif; }
+.rules-spices .gem { width: 10px; height: 10px; }
+.rules-done { flex: 0 0 auto; margin-top: 16px; }
 
 .topbar { height: 86px; padding: 0 clamp(22px, 5vw, 70px); display: flex; align-items: center; justify-content: space-between; position: relative; z-index: 2; border-bottom: 1px solid rgba(255,255,255,.14); }
 .wordmark { font-size: 22px; letter-spacing: .12em; font-weight: 700; }
@@ -279,6 +302,12 @@ input, select { border: 1px solid #d7c6aa; background: #fffdf7; color: var(--ink
   .topbar .theme-switcher button { width: 26px; padding: 0; justify-content: center; font-size: 0; }
   .topbar .theme-switcher button i { margin: 0; }
   .landing-shell footer { display: none; }
+  .rules-guide-backdrop { padding: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom)); }
+  .rules-guide { max-height: calc(100svh - 20px); padding: 22px 18px 17px; }
+  .rules-guide h2 { font-size: 24px; }
+  .rules-scroll { padding-right: 4px; }
+  .rules-scroll section { padding: 14px 0; }
+  .rules-scroll p, .rules-scroll li { font-size: 13px; line-height: 1.65; }
   .seats { grid-template-columns: 1fr; }
   .bot-controls { grid-template-columns: repeat(3, 1fr); }
   .bot-controls > div { grid-column: 1 / -1; }

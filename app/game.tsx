@@ -90,6 +90,29 @@ function LastActionBadge({ event }: { event: ActionEvent }) {
   </div>;
 }
 
+function RulesGuide({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return <div className="rules-guide-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
+    <section className="rules-guide" role="dialog" aria-modal="true" aria-labelledby="rules-guide-title">
+      <header><div><p className="eyebrow">游戏说明书</p><h2 id="rules-guide-title">香料商路规则</h2></div><button className="rules-close" aria-label="关闭规则说明书" onClick={onClose}>×</button></header>
+      <div className="rules-scroll">
+        <section><h3>游戏目标</h3><p>使用商人牌生产、升级和交换香料，再支付香料完成订单。游戏结束时总分最高的玩家获胜。</p></section>
+        <section><h3>轮到你时</h3><ol><li><b>打出商人牌：</b>执行生产、升级或交换效果。交换牌可在香料足够时连续执行多次。</li><li><b>招募商人：</b>取得商人市场中的一张牌。跳过的每张牌都要放置 1 个任意香料，取得牌上已有的全部香料。</li><li><b>完成订单：</b>支付订单要求的香料并获得订单分数；市场最前方的订单还可能获得金币或银币。</li><li><b>休息：</b>把所有已经打出的商人牌收回手中。</li></ol></section>
+        <section><h3>香料与商队</h3><div className="rules-spices"><span><i className="gem yellow" />姜黄</span><span><i className="gem red" />藏红花</span><span><i className="gem green" />小豆蔻</span><span><i className="gem brown" />肉桂</span></div><p>香料等级由左至右递增。升级一次，就是把 1 个香料换成下一级。回合结束时最多保留 10 个香料；超过时由玩家自行选择放回哪些香料。</p></section>
+        <section><h3>游戏结束与计分</h3><p>2–3 人游戏中，有玩家完成第 6 张订单后触发最后一轮；4–5 人游戏中则是第 5 张。所有玩家完成本轮后结算。</p><ul><li>订单牌上的分数</li><li>每枚金币 3 分，每枚银币 1 分</li><li>每个红色、绿色或棕色香料 1 分，黄色香料不计分</li></ul></section>
+      </div>
+      <button className="primary rules-done" onClick={onClose}>我知道了</button>
+    </section>
+  </div>;
+}
+
 export default function Game() {
   const [room, setRoom] = useState<RoomResponse | null>(null);
   const [name, setName] = useState("");
@@ -104,6 +127,7 @@ export default function Game() {
   const [activeEvent, setActiveEvent] = useState<ActionEvent | null>(null);
   const [chatQueue, setChatQueue] = useState<ChatEvent[]>([]);
   const [activeChat, setActiveChat] = useState<ChatEvent | null>(null);
+  const [showRules, setShowRules] = useState(false);
   const observedEventId = useRef<number | null>(null);
   const observedRoomCode = useRef<string | null>(null);
   const observedChatId = useRef<number | null>(null);
@@ -302,8 +326,10 @@ export default function Game() {
         </div>
         {room && !me && room.state.status === "lobby" && <button className="text-button" onClick={reconnectKnownPlayer}>返回已有席位</button>}
         {error && <div className="error-box">{error}</div>}
+        <button className="rules-link" onClick={() => setShowRules(true)}><span>◎</span> 查看规则说明书</button>
       </section>
       <footer>非官方玩法原型 · 使用原创界面与牌面</footer>
+      {showRules && <RulesGuide onClose={() => setShowRules(false)} />}
     </main>;
   }
 
