@@ -21,6 +21,15 @@ export type ActionEvent = {
   upgradeCount?: number;
   upgrades?: Spice[];
 };
+export const CHAT_PHRASES = ["老叟戏顽童", "神之一手", "你的计谋被我识破了"] as const;
+export type ChatPhrase = typeof CHAT_PHRASES[number];
+export type ChatEvent = {
+  id: number;
+  playerId: string;
+  playerName: string;
+  playerColor: string;
+  phrase: ChatPhrase;
+};
 
 export type Player = {
   id: string;
@@ -55,6 +64,8 @@ export type GameState = {
   log: string[];
   actionEvents?: ActionEvent[];
   nextActionEventId?: number;
+  chatEvents?: ChatEvent[];
+  nextChatEventId?: number;
 };
 
 export type GameAction =
@@ -128,6 +139,7 @@ export function createLobby(hostName: string, maxPlayers: number, token: string)
     orderDeck: [], merchantMarket: [], orderMarket: [], goldSupply: 0, silverSupply: 0,
     currentPlayer: 0, round: 1, finalRound: false, winnerIds: [], log: [`${hostName} 创建了商队`],
     actionEvents: [], nextActionEventId: 1,
+    chatEvents: [], nextChatEventId: 1,
   };
 }
 
@@ -227,6 +239,19 @@ function autoDiscard(player: Player, state?: GameState) {
 export function scorePlayer(player: Player) {
   return player.orders.reduce((sum, id) => sum + ORDER_CARDS[id].points, 0)
     + player.gold * 3 + player.silver + player.spices[1] + player.spices[2] + player.spices[3];
+}
+
+export function sendChat(state: GameState, playerId: string, phrase: ChatPhrase) {
+  if (state.status !== "playing") throw new Error("只能在游戏中发送语音");
+  if (!CHAT_PHRASES.includes(phrase)) throw new Error("这条语音不存在");
+  const player = state.players.find((candidate) => candidate.id === playerId);
+  if (!player) throw new Error("玩家不存在");
+  const events = state.chatEvents ?? [];
+  const id = state.nextChatEventId ?? ((events.at(-1)?.id ?? 0) + 1);
+  events.push({ id, playerId, playerName: player.name, playerColor: player.color, phrase });
+  state.chatEvents = events.slice(-12);
+  state.nextChatEventId = id + 1;
+  return state;
 }
 
 function finishTurn(state: GameState) {

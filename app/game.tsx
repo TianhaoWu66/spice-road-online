@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActionEvent, BotDifficulty, canAfford, describeMerchant, GameAction, GameState, MerchantCard, MERCHANT_CARDS,
+  ActionEvent, BotDifficulty, canAfford, CHAT_PHRASES, ChatEvent, ChatPhrase, describeMerchant, GameAction, GameState, MerchantCard, MERCHANT_CARDS,
   ORDER_CARDS, scorePlayer, Spice, Spices, SPICE_NAMES, zeroSpices,
 } from "../lib/game";
 
@@ -84,8 +84,12 @@ export default function Game() {
   const [visualTheme, setVisualTheme] = useState<VisualTheme>("celadon");
   const [actionQueue, setActionQueue] = useState<ActionEvent[]>([]);
   const [activeEvent, setActiveEvent] = useState<ActionEvent | null>(null);
+  const [chatQueue, setChatQueue] = useState<ChatEvent[]>([]);
+  const [activeChat, setActiveChat] = useState<ChatEvent | null>(null);
   const observedEventId = useRef<number | null>(null);
   const observedRoomCode = useRef<string | null>(null);
+  const observedChatId = useRef<number | null>(null);
+  const observedChatRoomCode = useRef<string | null>(null);
 
   const token = typeof window !== "undefined" ? localStorage.getItem(`silk-token-${room?.code}`) ?? "" : "";
   const me = room?.state.players.find((p) => p.id === localStorage.getItem(`silk-player-${room?.code}`));
@@ -165,6 +169,45 @@ export default function Game() {
     const timer = window.setTimeout(() => setActiveEvent(null), 1100);
     return () => window.clearTimeout(timer);
   }, [activeEvent]);
+
+  useEffect(() => {
+    if (!room?.code) return;
+    const events = room.state.chatEvents ?? [];
+    const latestId = events.at(-1)?.id ?? 0;
+    if (observedChatRoomCode.current !== room.code) {
+      observedChatRoomCode.current = room.code;
+      observedChatId.current = latestId;
+      setChatQueue([]);
+      setActiveChat(null);
+      return;
+    }
+    const lastSeen = observedChatId.current ?? latestId;
+    const fresh = events.filter((event) => event.id > lastSeen);
+    observedChatId.current = latestId;
+    if (fresh.length) setChatQueue((current) => [...current, ...fresh.filter((event) => !current.some((queued) => queued.id === event.id))]);
+  }, [room?.code, room?.state.chatEvents]);
+
+  useEffect(() => {
+    if (activeChat || !chatQueue.length) return;
+    setActiveChat(chatQueue[0]);
+    setChatQueue((current) => current.slice(1));
+  }, [activeChat, chatQueue]);
+
+  useEffect(() => {
+    if (!activeChat) return;
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+      const voice = new SpeechSynthesisUtterance(activeChat.phrase);
+      voice.lang = "zh-CN";
+      voice.rate = .9;
+      voice.pitch = .92;
+      const chineseVoice = window.speechSynthesis.getVoices().find((candidate) => candidate.lang.toLowerCase().startsWith("zh"));
+      if (chineseVoice) voice.voice = chineseVoice;
+      window.speechSynthesis.speak(voice);
+    }
+    const timer = window.setTimeout(() => setActiveChat(null), 2600);
+    return () => window.clearTimeout(timer);
+  }, [activeChat]);
 
   const sendAction = async (action: GameAction) => {
     if (!room) return;
@@ -286,8 +329,10 @@ export default function Game() {
       {state.players.map((p, index) => <div className={`player-strip ${index === state.currentPlayer && state.status === "playing" ? "active" : ""} ${p.id === me.id ? "me" : ""}`} key={p.id}>
         <span className="avatar" style={{ background: p.color }}>{p.name.slice(0, 1)}</span>
         <div className="player-meta"><b>{p.name}{p.id === me.id && <small> 你</small>}{p.isBot && <small> · {botLabels[p.botDifficulty ?? "normal"]}人机</small>}</b><SpiceRow values={p.spices} compact /></div>
-        <div className="player-score"><b>{p.orders.length}</b><small>订单</small></div>
+        <div className="player-score"><b>{scorePlayer(p)}</b><small>分 · {p.orders.length} 单</small></div>
+        {activeChat?.playerId === p.id && <div className="player-speech"><b>{activeChat.phrase}</b><span>🔊</span></div>}
       </div>)}
+      <div className="quick-chat"><b>语音快捷聊</b>{CHAT_PHRASES.map((phrase) => <button disabled={busy} key={phrase} onClick={() => request({ command: "chat", code: room.code, token, phrase: phrase as ChatPhrase })}><span>🔊</span>{phrase}</button>)}</div>
     </aside>
 
     <section className="board">

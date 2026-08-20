@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import {
   addBot, addPlayer, applyGameAction, BotDifficulty, createLobby, GameAction, GameState,
-  removeBot, runBotTurns, startGame,
+  ChatPhrase, removeBot, runBotTurns, sendChat, startGame,
 } from "../../../lib/game";
 
 const schemaSql = `CREATE TABLE IF NOT EXISTS rooms (
@@ -61,9 +61,9 @@ export async function POST(request: Request) {
   try {
     await ensureSchema();
     const body = await request.json() as {
-      command?: "create" | "join" | "addBot" | "removeBot" | "start" | "action";
+      command?: "create" | "join" | "addBot" | "removeBot" | "start" | "action" | "chat";
       code?: string; name?: string; token?: string; maxPlayers?: number;
-      action?: GameAction; difficulty?: BotDifficulty; botId?: string;
+      action?: GameAction; difficulty?: BotDifficulty; botId?: string; phrase?: ChatPhrase;
     };
     const name = String(body.name ?? "").trim().slice(0, 12);
     const token = String(body.token ?? "");
@@ -107,6 +107,8 @@ export async function POST(request: Request) {
     } else if (body.command === "action" && body.action) {
       applyGameAction(room.state, player.id, body.action);
       runBotTurns(room.state);
+    } else if (body.command === "chat" && body.phrase) {
+      sendChat(room.state, player.id, body.phrase);
     } else {
       throw new Error("未知操作");
     }
