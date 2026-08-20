@@ -1,0 +1,302 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  canAfford, describeMerchant, GameAction, GameState, MerchantCard, MERCHANT_CARDS,
+  ORDER_CARDS, scorePlayer, Spice, Spices, SPICE_NAMES, zeroSpices,
+} from "../lib/game";
+
+type RoomResponse = { code: string; version: number; token?: string; state: GameState; error?: string };
+type Modal =
+  | { kind: "trade"; cardId: string; times: number }
+  | { kind: "upgrade"; cardId: string; choices: Spice[] }
+  | { kind: "acquire"; marketIndex: number; payment: Spices };
+
+const spiceClass = ["yellow", "red", "green", "brown"];
+
+function SpiceRow({ values, compact = false }: { values: Spices; compact?: boolean }) {
+  return <div className={`spice-row ${compact ? "compact" : ""}`}>
+    {values.map((count, tier) => count > 0 && (
+      <span className={`spice-token ${spiceClass[tier]}`} title={SPICE_NAMES[tier]} key={tier}>
+        <i />{count}
+      </span>
+    ))}
+    {values.every((n) => n === 0) && <span className="empty-spices">—</span>}
+  </div>;
+}
+
+function Arrow() { return <span className="trade-arrow">→</span>; }
+
+function MerchantFace({ card, bonus }: { card: MerchantCard; bonus?: Spices }) {
+  return <>
+    <div className="card-kicker">{describeMerchant(card)}</div>
+    <div className="card-rule">
+      {card.type === "produce" && <SpiceRow values={card.gain} />}
+      {card.type === "upgrade" && <div className="upgrade-symbol"><span>◆</span><Arrow /><span>◆+</span><b>×{card.amount}</b></div>}
+      {card.type === "trade" && <><SpiceRow values={card.cost} /><Arrow /><SpiceRow values={card.gain} /></>}
+    </div>
+    {bonus && bonus.some(Boolean) && <div className="card-bonus"><small>附带</small><SpiceRow values={bonus} compact /></div>}
+  </>;
+}
+
+function OrderFace({ orderId }: { orderId: string }) {
+  const order = ORDER_CARDS[orderId];
+  return <>
+    <div className="points">{order.points}<small>分</small></div>
+    <SpiceRow values={order.cost} />
+  </>;
+}
+
+export default function Game() {
+  const [room, setRoom] = useState<RoomResponse | null>(null);
+  const [name, setName] = useState("");
+  const [joinCode, setJoinCode] = useState("");
+  const [maxPlayers, setMaxPlayers] = useState(5);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [modal, setModal] = useState<Modal | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const token = typeof window !== "undefined" ? localStorage.getItem(`silk-token-${room?.code}`) ?? "" : "";
+  const me = room?.state.players.find((p) => p.id === localStorage.getItem(`silk-player-${room?.code}`));
+  const myIndex = room?.state.players.findIndex((p) => p.id === me?.id) ?? -1;
+  const isMyTurn = room?.state.status === "playing" && room.state.currentPlayer === myIndex;
+
+  const request = useCallback(async (body: Record<string, unknown>) => {
+    setBusy(true); setError("");
+    try {
+      const response = await fetch("/api/room", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await response.json() as RoomResponse;
+      if (!response.ok) throw new Error(data.error || "操作失败");
+      setRoom(data);
+      if (data.token) {
+        localStorage.setItem(`silk-token-${data.code}`, data.token);
+        const player = data.state.players.find((p) => p.name === name.trim());
+        if (player) localStorage.setItem(`silk-player-${data.code}`, player.id);
+      }
+      window.history.replaceState({}, "", `#${data.code}`);
+      return data;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "连接失败");
+      return null;
+    } finally { setBusy(false); }
+  }, [name]);
+
+  const refresh = useCallback(async (code: string, quiet = false) => {
+    try {
+      const response = await fetch(`/api/room?code=${code}`, { cache: "no-store" });
+      const data = await response.json() as RoomResponse;
+      if (!response.ok) throw new Error(data.error || "读取房间失败");
+      setRoom((current) => !current || data.version >= current.version ? data : current);
+    } catch (e) {
+      if (!quiet) setError(e instanceof Error ? e.message : "连接失败");
+    }
+  }, []);
+
+  useEffect(() => {
+    const code = window.location.hash.slice(1).toUpperCase();
+    if (code.length === 6) { setJoinCode(code); refresh(code, true); }
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!room?.code) return;
+    const timer = window.setInterval(() => refresh(room.code, true), 1500);
+    return () => window.clearInterval(timer);
+  }, [room?.code, refresh]);
+
+  const sendAction = async (action: GameAction) => {
+    if (!room) return;
+    const result = await request({ command: "action", code: room.code, token, action });
+    if (result) setModal(null);
+  };
+
+  const handleCard = (cardId: string) => {
+    const card = MERCHANT_CARDS[cardId];
+    if (!isMyTurn || !card || !me) return;
+    if (card.type === "produce") sendAction({ type: "PLAY", cardId });
+    else if (card.type === "upgrade") setModal({ kind: "upgrade", cardId, choices: [] });
+    else {
+      let max = 20;
+      card.cost.forEach((n, i) => { if (n) max = Math.min(max, Math.floor(me.spices[i] / n)); });
+      if (max < 1) { setError("香料不足，无法完成这笔交易"); return; }
+      setModal({ kind: "trade", cardId, times: 1 });
+    }
+  };
+
+  const acquire = (marketIndex: number) => {
+    if (!isMyTurn || !me) return;
+    if (marketIndex === 0) sendAction({ type: "ACQUIRE", marketIndex, payment: zeroSpices() });
+    else if (me.spices.reduce((a, b) => a + b, 0) < marketIndex) setError("没有足够的香料支付市场位置费用");
+    else setModal({ kind: "acquire", marketIndex, payment: zeroSpices() });
+  };
+
+  const copyInvite = async () => {
+    await navigator.clipboard.writeText(`${window.location.origin}${window.location.pathname}#${room?.code}`);
+    setCopied(true); window.setTimeout(() => setCopied(false), 1400);
+  };
+
+  const reconnectKnownPlayer = async () => {
+    if (!room) return;
+    const storedToken = localStorage.getItem(`silk-token-${room.code}`);
+    if (!storedToken) { setRoom(null); return; }
+    const playerId = localStorage.getItem(`silk-player-${room.code}`);
+    const player = room.state.players.find((p) => p.id === playerId);
+    if (player) { setName(player.name); return; }
+    setRoom(null);
+  };
+
+  if (!room || (!me && room.state.status !== "lobby")) {
+    return <main className="landing-shell">
+      <div className="brand-mark">丝路</div>
+      <section className="landing-copy">
+        <p className="eyebrow">在线香料贸易桌游</p>
+        <h1>香料商路</h1>
+        <p>招募商人，转换香料，抢先完成高分订单。</p>
+        <div className="rule-pills"><span>2–5 人</span><span>约 20 分钟</span><span>浏览器联机</span></div>
+      </section>
+      <section className="entry-card">
+        <label>你的昵称<input value={name} maxLength={12} onChange={(e) => setName(e.target.value)} placeholder="商队领队" /></label>
+        <div className="create-row">
+          <label>人数<select value={maxPlayers} onChange={(e) => setMaxPlayers(Number(e.target.value))}>
+            {[2, 3, 4, 5].map((n) => <option value={n} key={n}>{n} 人</option>)}
+          </select></label>
+          <button className="primary" disabled={busy || !name.trim()} onClick={() => request({ command: "create", name, maxPlayers })}>创建房间</button>
+        </div>
+        <div className="divider"><span>或加入朋友</span></div>
+        <div className="join-row">
+          <input aria-label="房间码" value={joinCode} maxLength={6} onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} placeholder="六位房间码" />
+          <button disabled={busy || !name.trim() || joinCode.length !== 6} onClick={() => request({ command: "join", name, code: joinCode })}>加入</button>
+        </div>
+        {room && !me && room.state.status === "lobby" && <button className="text-button" onClick={reconnectKnownPlayer}>返回已有席位</button>}
+        {error && <div className="error-box">{error}</div>}
+      </section>
+      <footer>非官方玩法原型 · 使用原创界面与牌面</footer>
+    </main>;
+  }
+
+  if (!me) {
+    return <main className="landing-shell"><section className="entry-card"><h2>加入房间 {room.code}</h2>
+      <label>你的昵称<input value={name} maxLength={12} onChange={(e) => setName(e.target.value)} placeholder="商队领队" /></label>
+      <button className="primary wide" disabled={!name.trim() || busy} onClick={() => request({ command: "join", name, code: room.code })}>加入商队</button>
+      {error && <div className="error-box">{error}</div>}
+    </section></main>;
+  }
+
+  if (room.state.status === "lobby") {
+    const isHost = me.id === room.state.hostId;
+    return <main className="lobby-shell">
+      <header className="topbar"><div className="wordmark">香料商路</div><button className="room-code" onClick={copyInvite}><small>房间码</small>{room.code}<span>{copied ? "已复制" : "复制邀请"}</span></button></header>
+      <section className="lobby-panel">
+        <p className="eyebrow">等待商队集结</p><h1>{room.state.players.length} / {room.state.maxPlayers} 位玩家</h1>
+        <div className="seats">
+          {Array.from({ length: room.state.maxPlayers }).map((_, i) => {
+            const player = room.state.players[i];
+            return <div className={`seat ${player ? "filled" : ""}`} key={i}>
+              <span className="avatar" style={{ background: player?.color }}>{player ? player.name.slice(0, 1) : i + 1}</span>
+              <div><b>{player?.name ?? "等待加入"}</b><small>{player?.id === room.state.hostId ? "房主" : player ? "已就绪" : "空席位"}</small></div>
+            </div>;
+          })}
+        </div>
+        {isHost ? <button className="primary start-button" disabled={busy || room.state.players.length < 2} onClick={() => request({ command: "start", code: room.code, token })}>开始游戏</button>
+          : <div className="waiting-pulse"><i />等待房主开始游戏</div>}
+        {error && <div className="error-box">{error}</div>}
+      </section>
+    </main>;
+  }
+
+  const state = room.state;
+  const current = state.players[state.currentPlayer];
+  const ranking = [...state.players].sort((a, b) => scorePlayer(b) - scorePlayer(a));
+
+  return <main className="game-shell">
+    <header className="game-header">
+      <div className="wordmark">香料商路</div>
+      <div className="round-info"><span>第 {state.round} 轮</span><b>{state.status === "finished" ? "结算" : isMyTurn ? "轮到你行动" : `等待 ${current.name}`}</b>{state.finalRound && <em>最后一轮</em>}</div>
+      <button className="room-code mini" onClick={copyInvite}><small>房间</small>{state.status === "finished" ? "战报" : room.code}</button>
+    </header>
+
+    <aside className="players-panel">
+      {state.players.map((p, index) => <div className={`player-strip ${index === state.currentPlayer && state.status === "playing" ? "active" : ""} ${p.id === me.id ? "me" : ""}`} key={p.id}>
+        <span className="avatar" style={{ background: p.color }}>{p.name.slice(0, 1)}</span>
+        <div className="player-meta"><b>{p.name}{p.id === me.id && <small> 你</small>}</b><SpiceRow values={p.spices} compact /></div>
+        <div className="player-score"><b>{p.orders.length}</b><small>订单</small></div>
+      </div>)}
+    </aside>
+
+    <section className="board">
+      <div className="market-heading"><div><span>订单市场</span><small>支付香料，赢取声望</small></div><div className="coin-bank"><span className="coin gold">{state.goldSupply}</span><span className="coin silver">{state.silverSupply}</span></div></div>
+      <div className="orders-row">
+        {state.orderMarket.map((id, index) => <button className="order-card" key={id} disabled={!isMyTurn || !canAfford(me.spices, ORDER_CARDS[id].cost)} onClick={() => sendAction({ type: "CLAIM", orderIndex: index })}>
+          {index === 0 && state.goldSupply > 0 && <span className="coin-float gold">+3</span>}
+          {((index === 1 && state.goldSupply > 0) || (index === 0 && state.goldSupply === 0)) && state.silverSupply > 0 && <span className="coin-float silver">+1</span>}
+          <OrderFace orderId={id} />
+        </button>)}
+      </div>
+
+      <div className="market-heading merchant-title"><div><span>商人市场</span><small>越靠右，招募费用越高</small></div></div>
+      <div className="merchant-row">
+        {state.merchantMarket.map((slot, index) => <button className="merchant-card market-card" disabled={!isMyTurn} key={slot.cardId} onClick={() => acquire(index)}>
+          <span className="market-cost">{index === 0 ? "免费" : `支付 ${index}`}</span>
+          <MerchantFace card={MERCHANT_CARDS[slot.cardId]} bonus={slot.bonus} />
+        </button>)}
+      </div>
+    </section>
+
+    <section className="hand-panel">
+      <div className="hand-head"><div><span>你的商队</span><SpiceRow values={me.spices} /></div><div className="wallet"><span className="coin gold">{me.gold}</span><span className="coin silver">{me.silver}</span></div></div>
+      <div className="hand-row">
+        {me.hand.map((cardId) => <button className="merchant-card hand-card" disabled={!isMyTurn} key={cardId} onClick={() => handleCard(cardId)}><MerchantFace card={MERCHANT_CARDS[cardId]} /></button>)}
+        {!me.hand.length && <div className="empty-hand">手牌已全部打出</div>}
+      </div>
+      <button className="rest-button" disabled={!isMyTurn || !me.played.length} onClick={() => sendAction({ type: "REST" })}><span>☾</span>休息并收回 {me.played.length} 张牌</button>
+    </section>
+
+    <aside className="game-log"><b>商路动态</b>{state.log.slice(-7).reverse().map((line, i) => <p key={`${line}-${i}`}>{line}</p>)}</aside>
+    {error && <div className="toast" onClick={() => setError("")}>{error}</div>}
+    {modal && <ActionModal modal={modal} setModal={setModal} meSpices={me.spices} onConfirm={sendAction} busy={busy} />}
+    {state.status === "finished" && <div className="result-backdrop"><section className="result-card"><p className="eyebrow">商路结算</p><h1>{state.winnerIds.includes(me.id) ? "你赢得了商路盛誉" : `${ranking[0].name} 赢得了胜利`}</h1>
+      <div className="ranking">{ranking.map((p, i) => <div className={state.winnerIds.includes(p.id) ? "winner" : ""} key={p.id}><span>{i + 1}</span><i className="avatar" style={{ background: p.color }}>{p.name.slice(0, 1)}</i><b>{p.name}</b><small>{p.orders.length} 张订单</small><strong>{scorePlayer(p)} 分</strong></div>)}</div>
+      <button className="primary" onClick={() => { window.location.hash = ""; setRoom(null); }}>返回首页</button>
+    </section></div>}
+  </main>;
+}
+
+function ActionModal({ modal, setModal, meSpices, onConfirm, busy }: {
+  modal: Modal; setModal: (modal: Modal | null) => void; meSpices: Spices;
+  onConfirm: (action: GameAction) => void; busy: boolean;
+}) {
+  const card = modal.kind !== "acquire" ? MERCHANT_CARDS[modal.cardId] : null;
+  const paymentTotal = modal.kind === "acquire" ? modal.payment.reduce((a, b) => a + b, 0) : 0;
+  const upgradePreview = useMemo(() => {
+    const result = [...meSpices] as Spices;
+    if (modal.kind === "upgrade") modal.choices.forEach((tier) => { result[tier] -= 1; result[tier + 1] += 1; });
+    return result;
+  }, [meSpices, modal]);
+
+  return <div className="modal-backdrop" onMouseDown={(e) => { if (e.currentTarget === e.target) setModal(null); }}><section className="action-modal">
+    <button className="close" aria-label="关闭" onClick={() => setModal(null)}>×</button>
+    {modal.kind === "trade" && card?.type === "trade" && <>
+      <p className="eyebrow">重复交易</p><h2>选择交易次数</h2>
+      <div className="modal-rule"><SpiceRow values={card.cost} /><Arrow /><SpiceRow values={card.gain} /></div>
+      <div className="stepper"><button onClick={() => setModal({ ...modal, times: Math.max(1, modal.times - 1) })}>−</button><b>{modal.times} 次</b><button disabled={!canAfford(meSpices, card.cost, modal.times + 1)} onClick={() => setModal({ ...modal, times: modal.times + 1 })}>＋</button></div>
+      <button className="primary wide" disabled={busy} onClick={() => onConfirm({ type: "PLAY", cardId: modal.cardId, times: modal.times })}>确认交易</button>
+    </>}
+    {modal.kind === "upgrade" && card?.type === "upgrade" && <>
+      <p className="eyebrow">香料升级</p><h2>还可选择 {card.amount - modal.choices.length} 次</h2>
+      <div className="upgrade-preview"><SpiceRow values={meSpices} /><Arrow /><SpiceRow values={upgradePreview} /></div>
+      <div className="upgrade-options">{[0, 1, 2].map((tier) => <button key={tier} disabled={modal.choices.length >= card.amount || upgradePreview[tier] < 1} onClick={() => setModal({ ...modal, choices: [...modal.choices, tier as Spice] })}><i className={`gem ${spiceClass[tier]}`} />升级{SPICE_NAMES[tier]}</button>)}</div>
+      {modal.choices.length > 0 && <button className="undo" onClick={() => setModal({ ...modal, choices: modal.choices.slice(0, -1) })}>撤回上一步</button>}
+      <button className="primary wide" disabled={busy || !modal.choices.length} onClick={() => onConfirm({ type: "PLAY", cardId: modal.cardId, upgrades: modal.choices })}>确认升级</button>
+    </>}
+    {modal.kind === "acquire" && <>
+      <p className="eyebrow">市场费用</p><h2>选择 {modal.marketIndex} 个香料</h2>
+      <p className="modal-help">这些香料会依次留在左侧商人牌上。</p>
+      <div className="payment-options">{meSpices.map((count, tier) => <button key={tier} disabled={count <= modal.payment[tier] || paymentTotal >= modal.marketIndex} onClick={() => { const payment = [...modal.payment] as Spices; payment[tier] += 1; setModal({ ...modal, payment }); }}><i className={`gem ${spiceClass[tier]}`} /><span>{SPICE_NAMES[tier]}</span><b>{modal.payment[tier]} / {count}</b></button>)}</div>
+      <button className="undo" disabled={!paymentTotal} onClick={() => setModal({ ...modal, payment: zeroSpices() })}>重新选择</button>
+      <button className="primary wide" disabled={busy || paymentTotal !== modal.marketIndex} onClick={() => onConfirm({ type: "ACQUIRE", marketIndex: modal.marketIndex, payment: modal.payment })}>确认招募</button>
+    </>}
+  </section></div>;
+}
