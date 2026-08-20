@@ -22,7 +22,7 @@ export type ActionEvent = {
   upgradeCount?: number;
   upgrades?: Spice[];
 };
-export const CHAT_PHRASES = ["老叟戏顽童", "神之一手", "你的计谋被我识破了"] as const;
+export const CHAT_PHRASES = ["老叟戏顽童", "你粥", "神之一手", "你的计谋被我识破了"] as const;
 export type ChatPhrase = typeof CHAT_PHRASES[number];
 export type ChatEvent = {
   id: number;
@@ -47,6 +47,7 @@ export type Player = {
   silver: number;
   isBot?: boolean;
   botDifficulty?: BotDifficulty;
+  afkSince?: number;
 };
 
 export type GameState = {
@@ -70,6 +71,7 @@ export type GameState = {
   chatEvents?: ChatEvent[];
   nextChatEventId?: number;
   pendingDiscard?: { playerId: string; count: number };
+  currentTurnStartedAt?: number;
 };
 
 export type GameAction =
@@ -85,6 +87,7 @@ export const zeroSpices = (): Spices => [0, 0, 0, 0];
 const s = (a = 0, b = 0, c = 0, d = 0): Spices => [a, b, c, d];
 
 export const CARD_CATALOG_READY = true;
+export const AFK_TIMEOUT_MS = 40_000;
 export const MERCHANT_CARDS: Record<string, MerchantCard> = {
   "start-gain": { id: "start-gain", type: "produce", gain: s(2, 0, 0, 0) },
   "start-up": { id: "start-up", type: "upgrade", amount: 2 },
@@ -260,6 +263,7 @@ export function startGame(state: GameState): GameState {
   state.goldSupply = state.players.length * 2;
   state.silverSupply = state.players.length * 2;
   state.status = "playing";
+  state.currentTurnStartedAt = Date.now();
   state.log.push("商路开启，第一轮开始");
   return state;
 }
@@ -321,6 +325,7 @@ function finishTurn(state: GameState) {
   }
   state.currentPlayer = (state.currentPlayer + 1) % state.players.length;
   if (wasLast) state.round += 1;
+  state.currentTurnStartedAt = Date.now();
 }
 
 function recordAction(state: GameState, player: Player, event: Omit<ActionEvent, "id" | "playerId" | "playerName" | "playerColor" | "playerAvatar">) {
@@ -576,8 +581,40 @@ export function runBotTurns(state: GameState) {
   while (state.status === "playing" && state.players[state.currentPlayer]?.isBot) {
     if (turns++ >= 100) throw new Error("人机回合超过安全上限");
     const bot = state.players[state.currentPlayer];
+    const pending = state.pendingDiscard;
+    if (pending && pending.playerId === bot.id) {
+      autoDiscard(bot, state);
+      state.pendingDiscard = undefined;
+      finishTurn(state);
+      continue;
+    }
     const action = chooseBotAction(state);
     applyGameAction(state, bot.id, action);
   }
   return state;
+}
+
+
+export function resolveAfkTurns(state: GameState, now: number) {
+  if (state.status !== "playing") return false;
+  state.currentTurnStartedAt ??= now;
+  let changed = false;
+  let guard = 0;
+  while (state.status === "playing" && guard++ < 100) {
+    const player = state.players[state.currentPlayer];
+    if (player.isBot) {
+      runBotTurns(state);
+      continue;
+    }
+    if (now - (state.currentTurnStartedAt ?? now) >= AFK_TIMEOUT_MS) {
+      player.isBot = true;
+      player.botDifficulty = "normal";
+      player.afkSince ??= now;
+      state.log.push(`${player.name} 暂时离开，由 AI 代管`);
+      changed = true;
+      continue;
+    }
+    break;
+  }
+  return changed;
 }

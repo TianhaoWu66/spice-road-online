@@ -40,3 +40,9 @@ yarn-error.log*
 /.wrangler/
 /outputs/
 /work/
+
+# pythonanywhere deployment artifacts
+/pythonanywhere/static/
+/pythonanywhere/__pycache__/
+*.db
+*.zip

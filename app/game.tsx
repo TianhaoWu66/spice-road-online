@@ -21,6 +21,24 @@ const spiceClass = ["yellow", "red", "green", "brown"];
 const botLabels: Record<BotDifficulty, string> = { easy: "简单", normal: "普通", hard: "困难" };
 const themeLabels: Record<VisualTheme, string> = { parchment: "羊皮纸", night: "夜市", celadon: "青瓷" };
 
+const CHAT_AUDIO: Record<string, string> = {
+  "老叟戏顽童": "/audio/laoshouxiwantong.mp3",
+  "你粥": "/audio/nizhou.mp3",
+  "你的计谋被我识破了": "/audio/jimou.mp3",
+};
+
+function speakChatPhrase(phrase: string) {
+  if (!("speechSynthesis" in window)) return;
+  window.speechSynthesis.cancel();
+  const voice = new SpeechSynthesisUtterance(phrase);
+  voice.lang = "zh-CN";
+  voice.rate = .9;
+  voice.pitch = .92;
+  const chineseVoice = window.speechSynthesis.getVoices().find((candidate) => candidate.lang.toLowerCase().startsWith("zh"));
+  if (chineseVoice) voice.voice = chineseVoice;
+  window.speechSynthesis.speak(voice);
+}
+
 function SpiceRow({ values, compact = false }: { values: Spices; compact?: boolean }) {
   return <div className={`spice-row ${compact ? "compact" : ""}`}>
     {values.map((count, tier) => count > 0 && (
@@ -282,15 +300,12 @@ export default function Game() {
 
   useEffect(() => {
     if (!activeChat) return;
-    if ("speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-      const voice = new SpeechSynthesisUtterance(activeChat.phrase);
-      voice.lang = "zh-CN";
-      voice.rate = .9;
-      voice.pitch = .92;
-      const chineseVoice = window.speechSynthesis.getVoices().find((candidate) => candidate.lang.toLowerCase().startsWith("zh"));
-      if (chineseVoice) voice.voice = chineseVoice;
-      window.speechSynthesis.speak(voice);
+    const audioUrl = CHAT_AUDIO[activeChat.phrase];
+    if (audioUrl) {
+      const audio = new Audio(audioUrl);
+      audio.play().catch(() => speakChatPhrase(activeChat.phrase));
+    } else {
+      speakChatPhrase(activeChat.phrase);
     }
     const timer = window.setTimeout(() => setActiveChat(null), 2600);
     return () => window.clearTimeout(timer);
@@ -451,7 +466,7 @@ export default function Game() {
     <aside className="players-panel">
       {state.players.map((p, index) => <div className={`player-strip ${index === state.currentPlayer && state.status === "playing" ? "active" : ""} ${p.id === me.id ? "me" : ""}`} key={p.id}>
         <span className="avatar" style={{ background: p.color }}>{p.avatar ?? p.name.slice(0, 1)}</span>
-        <div className="player-meta"><b>{p.name}{p.id === me.id && <small> 你</small>}{p.isBot && <small> · {botLabels[p.botDifficulty ?? "normal"]}人机</small>}</b><SpiceRow values={p.spices} compact /></div>
+        <div className="player-meta"><b>{p.name}{p.id === me.id && <small> 你</small>}{p.isBot && <small> · {p.afkSince ? "AI代管中" : `${botLabels[p.botDifficulty ?? "normal"]}人机`}</small>}</b><SpiceRow values={p.spices} compact /></div>
         <div className="player-score"><b>{scorePlayer(p)}</b><small>分 · {p.orders.length} 单</small></div>
         {latestActions.has(p.id) && <LastActionBadge event={latestActions.get(p.id)!} />}
         {activeChat?.playerId === p.id && <div className="player-speech"><b>{activeChat.phrase}</b><span>🔊</span></div>}
