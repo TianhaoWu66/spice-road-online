@@ -11,7 +11,8 @@ type VisualTheme = "parchment" | "night" | "celadon";
 type Modal =
   | { kind: "trade"; cardId: string; times: number }
   | { kind: "upgrade"; cardId: string; choices: Spice[] }
-  | { kind: "acquire"; marketIndex: number; payment: Spices };
+  | { kind: "acquire"; marketIndex: number; payment: Spices }
+  | { kind: "discard"; required: number; selection: Spices };
 
 const spiceClass = ["yellow", "red", "green", "brown"];
 const botLabels: Record<BotDifficulty, string> = { easy: "简单", normal: "普通", hard: "困难" };
@@ -72,6 +73,23 @@ function ActionReveal({ event }: { event: ActionEvent }) {
   </div>;
 }
 
+function LastActionBadge({ event }: { event: ActionEvent }) {
+  const card = event.cardId ? MERCHANT_CARDS[event.cardId] : null;
+  const order = event.orderId ? ORDER_CARDS[event.orderId] : null;
+  const label = event.type === "PLAY"
+    ? `打出商人牌${event.times && event.times > 1 ? ` ×${event.times}` : ""}`
+    : event.type === "ACQUIRE" ? "招募商人"
+      : event.type === "CLAIM" ? `完成 ${order?.points ?? 0} 分订单`
+        : "休息并收回手牌";
+  return <div className="player-last-action" title="会保留到这名玩家下一次操作完成">
+    <span>最近操作</span><b>{label}</b>
+    {card?.type === "produce" && <div className="last-action-rule"><SpiceRow values={card.gain} compact /></div>}
+    {card?.type === "trade" && <div className="last-action-rule"><SpiceRow values={card.cost} compact /><Arrow /><SpiceRow values={card.gain} compact /></div>}
+    {card?.type === "upgrade" && <div className="last-action-rule">升级 {event.upgradeCount ?? card.amount} 次</div>}
+    {order && <div className="last-action-rule"><SpiceRow values={order.cost} compact /></div>}
+  </div>;
+}
+
 export default function Game() {
   const [room, setRoom] = useState<RoomResponse | null>(null);
   const [name, setName] = useState("");
@@ -94,7 +112,9 @@ export default function Game() {
   const token = typeof window !== "undefined" ? localStorage.getItem(`silk-token-${room?.code}`) ?? "" : "";
   const me = room?.state.players.find((p) => p.id === localStorage.getItem(`silk-player-${room?.code}`));
   const myIndex = room?.state.players.findIndex((p) => p.id === me?.id) ?? -1;
-  const isMyTurn = room?.state.status === "playing" && room.state.currentPlayer === myIndex && !activeEvent && actionQueue.length === 0;
+  const pendingDiscard = room?.state.pendingDiscard;
+  const mustDiscard = pendingDiscard?.playerId === me?.id;
+  const isMyTurn = room?.state.status === "playing" && room.state.currentPlayer === myIndex && !mustDiscard && !activeEvent && actionQueue.length === 0;
 
   const request = useCallback(async (body: Record<string, unknown>) => {
     setBusy(true); setError("");
@@ -169,6 +189,13 @@ export default function Game() {
     const timer = window.setTimeout(() => setActiveEvent(null), 1100);
     return () => window.clearTimeout(timer);
   }, [activeEvent]);
+
+  useEffect(() => {
+    if (!mustDiscard || !pendingDiscard || activeEvent || actionQueue.length) return;
+    setModal((current) => current?.kind === "discard"
+      ? { ...current, required: pendingDiscard.count }
+      : { kind: "discard", required: pendingDiscard.count, selection: zeroSpices() });
+  }, [mustDiscard, pendingDiscard, activeEvent, actionQueue.length]);
 
   useEffect(() => {
     if (!room?.code) return;
@@ -325,11 +352,13 @@ export default function Game() {
   const state = room.state;
   const current = state.players[state.currentPlayer];
   const ranking = [...state.players].sort((a, b) => scorePlayer(b) - scorePlayer(a));
+  const latestActions = new Map<string, ActionEvent>();
+  (state.actionEvents ?? []).forEach((event) => latestActions.set(event.playerId, event));
 
   return <main className={`game-shell theme-${visualTheme}`}>
     <header className="game-header">
       <div className="wordmark">香料商路</div>
-      <div className="round-info"><span>第 {state.round} 轮</span><b>{state.status === "finished" ? "结算" : isMyTurn ? "轮到你行动" : `等待 ${current.name}`}</b>{state.finalRound && <em>最后一轮</em>}</div>
+      <div className="round-info"><span>第 {state.round} 轮</span><b>{state.status === "finished" ? "结算" : mustDiscard ? "请选择放回的香料" : isMyTurn ? "轮到你行动" : `等待 ${current.name}`}</b>{state.finalRound && <em>最后一轮</em>}</div>
       <div className="header-actions"><ThemeSwitcher value={visualTheme} onChange={setVisualTheme} /><button className="room-code mini" onClick={copyInvite}><small>房间</small>{state.status === "finished" ? "战报" : room.code}</button></div>
     </header>
 
@@ -338,6 +367,7 @@ export default function Game() {
         <span className="avatar" style={{ background: p.color }}>{p.name.slice(0, 1)}</span>
         <div className="player-meta"><b>{p.name}{p.id === me.id && <small> 你</small>}{p.isBot && <small> · {botLabels[p.botDifficulty ?? "normal"]}人机</small>}</b><SpiceRow values={p.spices} compact /></div>
         <div className="player-score"><b>{scorePlayer(p)}</b><small>分 · {p.orders.length} 单</small></div>
+        {latestActions.has(p.id) && <LastActionBadge event={latestActions.get(p.id)!} />}
         {activeChat?.playerId === p.id && <div className="player-speech"><b>{activeChat.phrase}</b><span>🔊</span></div>}
       </div>)}
       <div className="quick-chat"><b>语音快捷聊</b>{CHAT_PHRASES.map((phrase) => <button disabled={busy} key={phrase} onClick={() => request({ command: "chat", code: room.code, token, phrase: phrase as ChatPhrase })}><span>🔊</span>{phrase}</button>)}</div>
@@ -386,16 +416,17 @@ function ActionModal({ modal, setModal, meSpices, onConfirm, busy }: {
   modal: Modal; setModal: (modal: Modal | null) => void; meSpices: Spices;
   onConfirm: (action: GameAction) => void; busy: boolean;
 }) {
-  const card = modal.kind !== "acquire" ? MERCHANT_CARDS[modal.cardId] : null;
+  const card = modal.kind === "trade" || modal.kind === "upgrade" ? MERCHANT_CARDS[modal.cardId] : null;
   const paymentTotal = modal.kind === "acquire" ? modal.payment.reduce((a, b) => a + b, 0) : 0;
+  const discardTotal = modal.kind === "discard" ? modal.selection.reduce((a, b) => a + b, 0) : 0;
   const upgradePreview = useMemo(() => {
     const result = [...meSpices] as Spices;
     if (modal.kind === "upgrade") modal.choices.forEach((tier) => { result[tier] -= 1; result[tier + 1] += 1; });
     return result;
   }, [meSpices, modal]);
 
-  return <div className="modal-backdrop" onMouseDown={(e) => { if (e.currentTarget === e.target) setModal(null); }}><section className="action-modal">
-    <button className="close" aria-label="关闭" onClick={() => setModal(null)}>×</button>
+  return <div className="modal-backdrop" onMouseDown={(e) => { if (modal.kind !== "discard" && e.currentTarget === e.target) setModal(null); }}><section className="action-modal">
+    {modal.kind !== "discard" && <button className="close" aria-label="关闭" onClick={() => setModal(null)}>×</button>}
     {modal.kind === "trade" && card?.type === "trade" && <>
       <p className="eyebrow">重复交易</p><h2>选择交易次数</h2>
       <div className="modal-rule"><SpiceRow values={card.cost} /><Arrow /><SpiceRow values={card.gain} /></div>
@@ -415,6 +446,13 @@ function ActionModal({ modal, setModal, meSpices, onConfirm, busy }: {
       <div className="payment-options">{meSpices.map((count, tier) => <button key={tier} disabled={count <= modal.payment[tier] || paymentTotal >= modal.marketIndex} onClick={() => { const payment = [...modal.payment] as Spices; payment[tier] += 1; setModal({ ...modal, payment }); }}><i className={`gem ${spiceClass[tier]}`} /><span>{SPICE_NAMES[tier]}</span><b>{modal.payment[tier]} / {count}</b></button>)}</div>
       <button className="undo" disabled={!paymentTotal} onClick={() => setModal({ ...modal, payment: zeroSpices() })}>重新选择</button>
       <button className="primary wide" disabled={busy || paymentTotal !== modal.marketIndex} onClick={() => onConfirm({ type: "ACQUIRE", marketIndex: modal.marketIndex, payment: modal.payment })}>确认招募</button>
+    </>}
+    {modal.kind === "discard" && <>
+      <p className="eyebrow">商队容量上限</p><h2>选择放回 {modal.required} 个香料</h2>
+      <p className="modal-help">你的商队最多携带10个香料。可以自由选择放回哪些香料。</p>
+      <div className="payment-options">{meSpices.map((count, tier) => <button key={tier} disabled={count <= modal.selection[tier] || discardTotal >= modal.required} onClick={() => { const selection = [...modal.selection] as Spices; selection[tier] += 1; setModal({ ...modal, selection }); }}><i className={`gem ${spiceClass[tier]}`} /><span>{SPICE_NAMES[tier]}</span><b>{modal.selection[tier]} / {count}</b></button>)}</div>
+      <button className="undo" disabled={!discardTotal} onClick={() => setModal({ ...modal, selection: zeroSpices() })}>重新选择</button>
+      <button className="primary wide" disabled={busy || discardTotal !== modal.required} onClick={() => onConfirm({ type: "DISCARD", spices: modal.selection })}>确认放回</button>
     </>}
   </section></div>;
 }

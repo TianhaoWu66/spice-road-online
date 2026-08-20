@@ -66,22 +66,109 @@ export type GameState = {
   nextActionEventId?: number;
   chatEvents?: ChatEvent[];
   nextChatEventId?: number;
+  pendingDiscard?: { playerId: string; count: number };
 };
 
 export type GameAction =
   | { type: "REST" }
   | { type: "PLAY"; cardId: string; upgrades?: Spice[]; times?: number }
   | { type: "ACQUIRE"; marketIndex: number; payment: Spices }
-  | { type: "CLAIM"; orderIndex: number };
+  | { type: "CLAIM"; orderIndex: number }
+  | { type: "DISCARD"; spices: Spices };
 
 export const SPICE_NAMES = ["姜黄", "藏红花", "小豆蔻", "肉桂"];
 export const PLAYER_COLORS = ["#e6a23c", "#df6b57", "#5f9b76", "#5f7dad", "#8b6bb1"];
 export const zeroSpices = (): Spices => [0, 0, 0, 0];
 const s = (a = 0, b = 0, c = 0, d = 0): Spices => [a, b, c, d];
 
-export const CARD_CATALOG_READY = false;
-export const MERCHANT_CARDS: Record<string, MerchantCard> = {};
-export const ORDER_CARDS: Record<string, OrderCard> = {};
+export const CARD_CATALOG_READY = true;
+export const MERCHANT_CARDS: Record<string, MerchantCard> = {
+  "start-gain": { id: "start-gain", type: "produce", gain: s(2, 0, 0, 0) },
+  "start-up": { id: "start-up", type: "upgrade", amount: 2 },
+  m001: { id: "m001", type: "trade", cost: s(0, 0, 1, 0), gain: s(1, 2, 0, 0) },
+  m002: { id: "m002", type: "trade", cost: s(0, 3, 0, 0), gain: s(0, 0, 3, 0) },
+  m003: { id: "m003", type: "trade", cost: s(0, 0, 1, 0), gain: s(4, 1, 0, 0) },
+  m004: { id: "m004", type: "trade", cost: s(0, 0, 0, 1), gain: s(2, 2, 0, 0) },
+  m005: { id: "m005", type: "trade", cost: s(4, 0, 0, 0), gain: s(0, 0, 1, 1) },
+  m006: { id: "m006", type: "trade", cost: s(0, 2, 0, 0), gain: s(2, 0, 0, 1) },
+  m007: { id: "m007", type: "trade", cost: s(2, 0, 0, 0), gain: s(0, 0, 1, 0) },
+  m008: { id: "m008", type: "produce", gain: s(3, 0, 0, 0) },
+  m009: { id: "m009", type: "produce", gain: s(0, 0, 0, 1) },
+  m010: { id: "m010", type: "trade", cost: s(0, 3, 0, 0), gain: s(1, 0, 1, 1) },
+  m011: { id: "m011", type: "trade", cost: s(0, 0, 2, 0), gain: s(2, 3, 0, 0) },
+  m012: { id: "m012", type: "trade", cost: s(0, 2, 0, 0), gain: s(3, 0, 1, 0) },
+  m013: { id: "m013", type: "trade", cost: s(0, 0, 2, 0), gain: s(2, 1, 0, 1) },
+  m014: { id: "m014", type: "produce", gain: s(0, 0, 1, 0) },
+  m015: { id: "m015", type: "produce", gain: s(0, 2, 0, 0) },
+  m016: { id: "m016", type: "trade", cost: s(0, 0, 2, 0), gain: s(0, 0, 0, 2) },
+  m017: { id: "m017", type: "trade", cost: s(0, 0, 0, 2), gain: s(0, 3, 2, 0) },
+  m018: { id: "m018", type: "trade", cost: s(3, 0, 0, 0), gain: s(0, 0, 0, 1) },
+  m019: { id: "m019", type: "produce", gain: s(2, 1, 0, 0) },
+  m020: { id: "m020", type: "trade", cost: s(1, 1, 0, 0), gain: s(0, 0, 0, 1) },
+  m021: { id: "m021", type: "trade", cost: s(3, 0, 0, 0), gain: s(0, 3, 0, 0) },
+  m022: { id: "m022", type: "trade", cost: s(0, 0, 0, 1), gain: s(0, 3, 0, 0) },
+  m023: { id: "m023", type: "trade", cost: s(0, 0, 2, 0), gain: s(0, 2, 0, 1) },
+  m024: { id: "m024", type: "trade", cost: s(0, 0, 3, 0), gain: s(0, 0, 0, 3) },
+  m025: { id: "m025", type: "trade", cost: s(4, 0, 0, 0), gain: s(0, 0, 2, 0) },
+  m026: { id: "m026", type: "trade", cost: s(0, 3, 0, 0), gain: s(0, 0, 0, 2) },
+  m027: { id: "m027", type: "upgrade", amount: 3 },
+  m028: { id: "m028", type: "trade", cost: s(0, 0, 0, 1), gain: s(0, 0, 2, 0) },
+  m029: { id: "m029", type: "trade", cost: s(0, 2, 0, 0), gain: s(0, 0, 2, 0) },
+  m030: { id: "m030", type: "trade", cost: s(0, 0, 0, 2), gain: s(1, 1, 3, 0) },
+  m031: { id: "m031", type: "trade", cost: s(0, 3, 0, 0), gain: s(2, 0, 2, 0) },
+  m032: { id: "m032", type: "produce", gain: s(1, 1, 0, 0) },
+  m033: { id: "m033", type: "trade", cost: s(0, 1, 0, 0), gain: s(3, 0, 0, 0) },
+  m034: { id: "m034", type: "trade", cost: s(3, 0, 0, 0), gain: s(0, 1, 1, 0) },
+  m035: { id: "m035", type: "trade", cost: s(0, 0, 0, 1), gain: s(1, 1, 1, 0) },
+  m036: { id: "m036", type: "trade", cost: s(2, 0, 1, 0), gain: s(0, 0, 0, 2) },
+  m037: { id: "m037", type: "produce", gain: s(4, 0, 0, 0) },
+  m038: { id: "m038", type: "trade", cost: s(0, 0, 0, 1), gain: s(3, 0, 1, 0) },
+  m039: { id: "m039", type: "trade", cost: s(2, 0, 0, 0), gain: s(0, 2, 0, 0) },
+  m040: { id: "m040", type: "trade", cost: s(5, 0, 0, 0), gain: s(0, 0, 0, 2) },
+  m041: { id: "m041", type: "trade", cost: s(0, 0, 1, 0), gain: s(0, 2, 0, 0) },
+  m042: { id: "m042", type: "produce", gain: s(1, 0, 1, 0) },
+};
+const ORDER_CARD_DATA: Array<[string, Spices, number]> = [
+  ["o001", s(1, 1, 1, 1), 12],
+  ["o002", s(0, 2, 2, 0), 10],
+  ["o003", s(0, 5, 0, 0), 10],
+  ["o004", s(3, 1, 1, 1), 14],
+  ["o005", s(0, 2, 0, 3), 16],
+  ["o006", s(3, 0, 2, 0), 9],
+  ["o007", s(1, 0, 2, 1), 12],
+  ["o008", s(0, 2, 2, 2), 19],
+  ["o009", s(3, 2, 0, 0), 7],
+  ["o010", s(0, 0, 4, 0), 12],
+  ["o011", s(2, 1, 0, 1), 9],
+  ["o012", s(2, 0, 0, 2), 10],
+  ["o013", s(0, 0, 5, 0), 15],
+  ["o014", s(0, 2, 1, 1), 12],
+  ["o015", s(1, 1, 1, 3), 20],
+  ["o016", s(2, 3, 0, 0), 8],
+  ["o017", s(0, 0, 0, 4), 16],
+  ["o018", s(2, 0, 3, 0), 11],
+  ["o019", s(0, 4, 0, 0), 8],
+  ["o020", s(0, 0, 0, 5), 20],
+  ["o021", s(2, 0, 0, 3), 14],
+  ["o022", s(0, 0, 2, 2), 14],
+  ["o023", s(0, 0, 2, 3), 18],
+  ["o024", s(0, 0, 3, 2), 17],
+  ["o025", s(0, 2, 3, 0), 13],
+  ["o026", s(3, 0, 0, 2), 11],
+  ["o027", s(2, 2, 0, 2), 13],
+  ["o028", s(1, 1, 3, 1), 18],
+  ["o029", s(0, 3, 0, 2), 14],
+  ["o030", s(0, 2, 0, 2), 12],
+  ["o031", s(2, 2, 0, 0), 6],
+  ["o032", s(2, 2, 2, 0), 13],
+  ["o033", s(2, 0, 2, 0), 8],
+  ["o034", s(1, 3, 1, 1), 16],
+  ["o035", s(0, 3, 2, 0), 12],
+  ["o036", s(2, 0, 2, 2), 17],
+];
+export const ORDER_CARDS: Record<string, OrderCard> = Object.fromEntries(
+  ORDER_CARD_DATA.map(([id, cost, points]) => [id, { id, cost, points }]),
+);
 
 const shuffle = <T,>(values: T[]) => {
   const copy = [...values];
@@ -245,6 +332,18 @@ export function applyGameAction(state: GameState, playerId: string, action: Game
   const player = state.players[state.currentPlayer];
   if (player.id !== playerId) throw new Error("还没轮到你");
 
+  if (state.pendingDiscard) {
+    if (state.pendingDiscard.playerId !== player.id || action.type !== "DISCARD") throw new Error("请先选择要放回的香料");
+    const excess = total(player.spices) - 10;
+    if (excess <= 0 || total(action.spices) !== excess || !canAfford(player.spices, action.spices)) throw new Error("放回的香料数量不正确");
+    pay(player.spices, action.spices);
+    state.pendingDiscard = undefined;
+    state.log.push(`${player.name} 选择放回了 ${excess} 个香料`);
+    finishTurn(state);
+    return state;
+  }
+  if (action.type === "DISCARD") throw new Error("当前不需要放回香料");
+
   if (action.type === "REST") {
     if (!player.played.length) throw new Error("当前没有需要收回的牌");
     player.hand.push(...player.played);
@@ -284,7 +383,6 @@ export function applyGameAction(state: GameState, playerId: string, action: Game
     });
     player.hand = player.hand.filter((id) => id !== action.cardId);
     player.played.push(action.cardId);
-    autoDiscard(player, state);
   }
 
   if (action.type === "ACQUIRE") {
@@ -301,7 +399,6 @@ export function applyGameAction(state: GameState, playerId: string, action: Game
     state.merchantMarket.splice(index, 1);
     const next = state.merchantDeck.shift();
     if (next) state.merchantMarket.push({ cardId: next, bonus: zeroSpices() });
-    autoDiscard(player, state);
     state.log.push(`${player.name} 招募了一名新商人`);
     recordAction(state, player, { type: "ACQUIRE", cardId: selected.cardId });
   }
@@ -331,6 +428,15 @@ export function applyGameAction(state: GameState, playerId: string, action: Game
     }
   }
 
+  const excess = total(player.spices) - 10;
+  if (excess > 0) {
+    if (player.isBot) autoDiscard(player, state);
+    else {
+      state.pendingDiscard = { playerId: player.id, count: excess };
+      state.log.push(`${player.name} 需要选择放回 ${excess} 个香料`);
+      return state;
+    }
+  }
   finishTurn(state);
   return state;
 }

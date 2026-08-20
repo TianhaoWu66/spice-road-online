@@ -136,6 +136,12 @@ input, select { border: 1px solid #d7c6aa; background: #fffdf7; color: var(--ink
 .player-score b, .player-score small { display: block; }
 .player-score b { color: #f1ca86; font-size: 17px; }
 .player-score small { white-space: nowrap; font: 8px system-ui, sans-serif; opacity: .55; }
+.player-last-action { grid-column: 1 / -1; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 3px 7px; min-width: 0; margin-top: 2px; padding: 7px 8px; border: 1px solid rgba(231,181,94,.2); border-radius: 4px; background: rgba(17,11,8,.24); font-family: system-ui, sans-serif; }
+.player-last-action > span { color: #d7ad68; font-size: 8px; letter-spacing: .08em; }
+.player-last-action > b { overflow: hidden; color: #fff4df; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.last-action-rule { grid-column: 1 / -1; min-height: 18px; display: flex; align-items: center; justify-content: flex-start; gap: 4px; color: rgba(255,248,232,.72); font-size: 9px; }
+.last-action-rule .spice-row { justify-content: flex-start; }
+.last-action-rule .trade-arrow { font-size: 9px; }
 .player-speech { position: absolute; z-index: 22; left: calc(100% + 8px); top: 4px; width: max-content; max-width: 230px; display: flex; align-items: center; gap: 8px; padding: 10px 12px 10px 14px; border: 1px solid #d5b372; border-radius: 5px 13px 13px 13px; background: #fff8e8; color: #3d2a1e; box-shadow: 0 10px 28px rgba(40,24,15,.25); animation: speech-pop 2.6s ease both; }
 .player-speech::before { content: ""; position: absolute; left: -7px; top: 10px; width: 12px; height: 12px; border-left: 1px solid #d5b372; border-bottom: 1px solid #d5b372; background: #fff8e8; transform: rotate(45deg); }
 .player-speech b { position: relative; z-index: 1; font-size: 13px; }
@@ -276,6 +282,87 @@ input, select { border: 1px solid #d7c6aa; background: #fffdf7; color: var(--ink
   .seats { grid-template-columns: 1fr; }
   .bot-controls { grid-template-columns: repeat(3, 1fr); }
   .bot-controls > div { grid-column: 1 / -1; }
-  .game-shell { min-width: 720px; }
-  body:has(.game-shell) { overflow-x: auto; }
+  body:has(.game-shell) { overflow-x: hidden; }
+  .game-shell { width: 100%; min-width: 0; min-height: 100svh; grid-template-columns: minmax(0, 1fr); grid-template-rows: 58px auto auto auto; grid-template-areas: "header" "players" "board" "hand"; }
+  .game-header { grid-template-columns: auto 1fr auto; min-width: 0; padding: 0 max(10px, env(safe-area-inset-left)); gap: 8px; }
+  .game-header .wordmark { font-size: 15px; letter-spacing: .05em; }
+  .game-header .header-actions { gap: 5px; min-width: 0; }
+  .game-header .theme-switcher button { width: 24px; min-height: 26px; justify-content: center; padding: 0; font-size: 0; }
+  .game-header .theme-switcher button i { margin: 0; }
+  .room-code.mini { padding: 5px 8px; font-size: 11px; }
+  .round-info { min-width: 0; font-size: 10px; }
+  .round-info span { display: none; }
+  .round-info b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .round-info em { display: inline-block; margin: 3px 0 0; padding: 2px 5px; font-size: 8px; }
+  .players-panel { display: flex; gap: 8px; padding: 9px max(10px, env(safe-area-inset-left)); overflow-x: auto; border-right: 0; border-bottom: 1px solid rgba(255,255,255,.08); scroll-snap-type: x proximity; overscroll-behavior-x: contain; }
+  .player-strip { flex: 0 0 min(190px, 72vw); margin: 0; padding: 8px; scroll-snap-align: start; }
+  .player-last-action { padding: 5px 7px; }
+  .quick-chat { flex: 0 0 min(210px, 76vw); margin: 0; padding: 5px 4px; border: 0; }
+  .quick-chat button { min-height: 28px; margin-top: 4px; }
+  .player-speech { position: fixed; left: 50%; top: 66px; max-width: calc(100vw - 30px); transform: translateX(-50%); }
+  .player-speech::before { display: none; }
+  .board { min-width: 0; padding: 14px 12px 18px; overflow: hidden; }
+  .market-heading { margin-bottom: 8px; }
+  .market-heading span { font-size: 14px; }
+  .market-heading small { display: none; }
+  .merchant-title { margin-top: 17px; }
+  .orders-row, .merchant-row, .hand-row { grid-auto-columns: 112px; overflow-x: auto; padding: 5px 5px 12px; scroll-snap-type: x proximity; overscroll-behavior-x: contain; scrollbar-width: thin; }
+  .orders-row > *, .merchant-row > *, .hand-row > * { scroll-snap-align: start; }
+  .hand-panel { min-width: 0; padding: 10px 12px max(12px, env(safe-area-inset-bottom)); overflow: hidden; border-top-width: 2px; }
+  .hand-head { min-height: 32px; padding-right: 118px; margin-bottom: 4px; }
+  .hand-head > div:first-child { display: block; font-size: 12px; }
+  .wallet { gap: 3px; }
+  .hand-row { grid-auto-columns: 106px; justify-content: initial; }
+  .hand-card { height: 120px; }
+  .rest-button { top: 9px; right: 12px; bottom: auto; padding: 7px 10px; font-size: 9px; }
+  .action-stage { min-width: min(270px, calc(100vw - 28px)); min-height: 224px; padding: 58px 28px 24px; }
+  .reveal-card-face, .reveal-order { width: 124px; height: 158px; }
+  .modal-backdrop, .result-backdrop { padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom)); overflow-y: auto; }
+  .action-modal, .result-card { padding: 26px 18px 20px; }
+  .action-modal h2, .result-card h1 { margin-bottom: 16px; font-size: 22px; }
+  .ranking > div { grid-template-columns: 22px 32px 1fr auto; gap: 7px; padding: 8px; }
+  .ranking > div small { display: none; }
+  .ranking .avatar { width: 30px; height: 30px; }
+}
+
+@media (orientation: landscape) and (max-height: 600px) and (max-width: 950px) {
+  body:has(.game-shell) { overflow: hidden; }
+  .game-shell { width: 100%; min-width: 0; height: 100svh; min-height: 0; grid-template-columns: 160px minmax(0, 1fr); grid-template-rows: 50px minmax(0, 1fr) 145px; grid-template-areas: "header header" "players board" "players hand"; overflow: hidden; }
+  .game-header { grid-template-columns: auto 1fr auto; padding: 0 max(10px, env(safe-area-inset-left)); gap: 8px; }
+  .game-header .wordmark { font-size: 14px; }
+  .game-header .theme-switcher button { width: 23px; min-height: 24px; justify-content: center; padding: 0; font-size: 0; }
+  .round-info { font-size: 9px; }
+  .round-info span { display: none; }
+  .room-code.mini { padding: 4px 7px; font-size: 10px; }
+  .players-panel { display: block; min-width: 0; padding: 7px 6px max(7px, env(safe-area-inset-bottom)); overflow: auto; border-right: 1px solid rgba(255,255,255,.08); border-bottom: 0; }
+  .player-strip { width: 100%; margin-bottom: 4px; padding: 6px; grid-template-columns: 30px 1fr auto; gap: 6px; }
+  .player-strip .avatar { width: 29px; height: 29px; }
+  .player-last-action { padding: 4px 5px; }
+  .quick-chat { margin-top: 7px; padding: 7px 2px 0; border-top: 1px solid rgba(255,255,255,.1); }
+  .quick-chat button { min-height: 27px; margin-top: 3px; }
+  .board { min-width: 0; padding: 9px 12px; overflow: auto; }
+  .market-heading { margin-bottom: 5px; }
+  .market-heading span { font-size: 13px; }
+  .market-heading small { display: none; }
+  .merchant-title { margin-top: 12px; }
+  .orders-row, .merchant-row, .hand-row { grid-auto-columns: 100px; overflow-x: auto; gap: 7px; padding: 4px 3px 9px; scroll-snap-type: x proximity; }
+  .order-card { height: 116px; }
+  .merchant-card { height: 124px; }
+  .hand-panel { min-width: 0; padding: 7px 10px max(8px, env(safe-area-inset-bottom)); overflow: hidden; }
+  .hand-head { min-height: 26px; padding-right: 105px; margin-bottom: 1px; }
+  .hand-head > div:first-child { display: flex; font-size: 10px; }
+  .hand-row { grid-auto-columns: 94px; }
+  .hand-card { height: 98px; padding: 7px 7px 6px; }
+  .rest-button { top: 6px; right: 9px; bottom: auto; padding: 6px 9px; font-size: 8px; }
+  .game-log { display: none; }
+  .action-stage { min-width: 235px; min-height: 190px; padding: 49px 24px 18px; }
+  .reveal-card-face, .reveal-order { width: 105px; height: 132px; }
+  .action-player { top: 9px; }
+  .modal-backdrop, .result-backdrop { padding: 8px max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left)); overflow-y: auto; }
+  .action-modal { width: min(520px, 100%); padding: 20px 24px 16px; }
+  .action-modal h2 { margin-bottom: 10px; font-size: 19px; }
+  .modal-rule, .upgrade-preview { padding: 10px; margin-bottom: 8px; }
+  .upgrade-options, .payment-options { grid-template-columns: repeat(4, 1fr); gap: 5px; margin: 7px 0; }
+  .upgrade-options button, .payment-options button { min-height: 44px; }
+  .result-card { max-height: calc(100svh - 16px); overflow-y: auto; padding: 18px 24px; }
 }
