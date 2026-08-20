@@ -11,7 +11,7 @@ export type AccountProfile = {
 type StoredAccount = AccountProfile & { password_hash: string; password_salt: string };
 const SESSION_COOKIE = "spice_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
-const PASSWORD_ITERATIONS = 120_000;
+const PASSWORD_ITERATIONS = 100_000;
 
 const usersSql = `CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY NOT NULL,
