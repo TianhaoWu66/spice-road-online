@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActionEvent, BotDifficulty, canAfford, CARD_CATALOG_READY, CHAT_PHRASES, ChatEvent, ChatPhrase, describeMerchant, GameAction, GameState, MerchantCard, MERCHANT_CARDS,
   ORDER_CARDS, scorePlayer, Spice, Spices, SPICE_NAMES, zeroSpices,
+  addBot, addPlayer, applyGameAction, createLobby, removeBot, runBotTurns, sendChat, startGame,
 } from "../lib/game";
 import { PROFILE_AVATARS, ProfileAvatar } from "../lib/profile";
 
@@ -135,7 +136,12 @@ function RulesGuide({ onClose }: { onClose: () => void }) {
 }
 
 export default function Game() {
-  const [room, setRoom] = useState<RoomResponse | null>(null);
+  const [serverRoom, setServerRoom] = useState<RoomResponse | null>(null);
+  const [localMode, setLocalMode] = useState(false);
+  const [localState, setLocalState] = useState<GameState | null>(null);
+  const [localPass, setLocalPass] = useState(false);
+  const [localAddName, setLocalAddName] = useState("");
+  const lastLocalActor = useRef<string | null>(null);
   const [name, setName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [maxPlayers, setMaxPlayers] = useState(5);
@@ -158,24 +164,28 @@ export default function Game() {
   const [password, setPassword] = useState("");
   const [registerNickname, setRegisterNickname] = useState("");
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
+  const room = localMode ? (localState ? { code: "LOCAL", version: 0, state: localState } as RoomResponse : null) : serverRoom;
   const observedEventId = useRef<number | null>(null);
   const observedRoomCode = useRef<string | null>(null);
   const observedChatId = useRef<number | null>(null);
   const observedChatRoomCode = useRef<string | null>(null);
 
-  const token = typeof window !== "undefined" ? localStorage.getItem(`silk-token-${room?.code}`) ?? "" : "";
-  const me = room?.state.players.find((p) => p.id === localStorage.getItem(`silk-player-${room?.code}`));
-  const myIndex = room?.state.players.findIndex((p) => p.id === me?.id) ?? -1;
+  const token = localMode ? "local" : (typeof window !== "undefined" ? localStorage.getItem(`silk-token-${room?.code}`) ?? "" : "");
+  const me = localMode
+    ? (room ? room.state.players[room.state.currentPlayer] : undefined)
+    : room?.state.players.find((p) => p.id === localStorage.getItem(`silk-player-${room?.code}`));
+  const myIndex = localMode ? (room?.state.currentPlayer ?? -1) : (room?.state.players.findIndex((p) => p.id === me?.id) ?? -1);
   const pendingDiscard = room?.state.pendingDiscard;
   const mustDiscard = pendingDiscard?.playerId === me?.id;
   const isMyTurn = room?.state.status === "playing" && room.state.currentPlayer === myIndex && !mustDiscard && !activeEvent && actionQueue.length === 0;
 
   useEffect(() => {
+    if (localMode) { setAuthReady(true); return; }
     fetch("/api/auth", { cache: "no-store" }).then(async (response) => {
       const data = await response.json() as { user?: AccountProfile | null };
       if (data.user) { setAccount(data.user); setName(data.user.nickname); }
-    }).finally(() => setAuthReady(true));
-  }, []);
+    }).catch(() => {}).finally(() => setAuthReady(true));
+  }, [localMode]);
 
   const accountRequest = async (action: "register" | "login" | "logout" | "avatar", avatar?: ProfileAvatar) => {
     setAuthBusy(true); setAuthError("");
@@ -194,7 +204,66 @@ export default function Game() {
     } finally { setAuthBusy(false); }
   };
 
+  const localRequest = useCallback(async (body: Record<string, unknown>) => {
+    if (!localState) return null;
+    setBusy(true); setError("");
+    try {
+      const next = structuredClone(localState) as GameState;
+      const command = body.command;
+      const pname = String(body.name ?? "").trim().slice(0, 12);
+      if (command === "join") {
+        if (!pname) throw new Error("请输入昵称");
+        if (next.status !== "lobby") throw new Error("游戏已经开始");
+        addPlayer(next, pname, `local-${next.players.length}`, undefined);
+        setLocalState(next);
+        return { code: "LOCAL", version: 0, state: next } as RoomResponse;
+      }
+      if (command === "addBot") {
+        if (next.status !== "lobby") throw new Error("游戏已经开始");
+        addBot(next, String(body.difficulty ?? "normal") as BotDifficulty);
+        setLocalState(next);
+        return { code: "LOCAL", version: 0, state: next } as RoomResponse;
+      }
+      if (command === "removeBot") {
+        removeBot(next, String(body.botId ?? ""));
+        setLocalState(next);
+        return { code: "LOCAL", version: 0, state: next } as RoomResponse;
+      }
+      if (command === "start") {
+        startGame(next);
+        runBotTurns(next);
+        setLocalState(next);
+        lastLocalActor.current = null;
+        setLocalPass(next.status === "playing" && next.players.filter((p) => !p.isBot).length > 1);
+        return { code: "LOCAL", version: 0, state: next } as RoomResponse;
+      }
+      const actor = next.players[next.currentPlayer];
+      if (!actor || actor.isBot) throw new Error("还没轮到你");
+      if (command === "action" && body.action) {
+        applyGameAction(next, actor.id, body.action as GameAction);
+        runBotTurns(next);
+        setLocalState(next);
+        const humanCount = next.players.filter((p) => !p.isBot).length;
+        const nextActor = next.players[next.currentPlayer];
+        const handoff = next.status === "playing" && humanCount > 1 && nextActor && !nextActor.isBot && nextActor.id !== lastLocalActor.current;
+        setLocalPass(handoff);
+        lastLocalActor.current = actor.id;
+        return { code: "LOCAL", version: 0, state: next } as RoomResponse;
+      }
+      if (command === "chat" && body.phrase) {
+        sendChat(next, actor.id, body.phrase as ChatPhrase);
+        setLocalState(next);
+        return { code: "LOCAL", version: 0, state: next } as RoomResponse;
+      }
+      throw new Error("未知操作");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "操作失败");
+      return null;
+    } finally { setBusy(false); }
+  }, [localState]);
+
   const request = useCallback(async (body: Record<string, unknown>) => {
+    if (localMode) return localRequest(body);
     setBusy(true); setError("");
     try {
       const response = await fetch("/api/room", {
@@ -203,7 +272,7 @@ export default function Game() {
       });
       const data = await response.json() as RoomResponse;
       if (!response.ok) throw new Error(data.error || "操作失败");
-      setRoom(data);
+      setServerRoom(data);
       if (data.token) {
         localStorage.setItem(`silk-token-${data.code}`, data.token);
         const player = data.playerId ? data.state.players.find((candidate) => candidate.id === data.playerId) : data.state.players.find((candidate) => candidate.name === name.trim());
@@ -215,18 +284,19 @@ export default function Game() {
       setError(e instanceof Error ? e.message : "连接失败");
       return null;
     } finally { setBusy(false); }
-  }, [name]);
+  }, [localMode, localRequest, name]);
 
   const refresh = useCallback(async (code: string, quiet = false) => {
+    if (localMode) return;
     try {
       const response = await fetch(`/api/room?code=${code}`, { cache: "no-store" });
       const data = await response.json() as RoomResponse;
       if (!response.ok) throw new Error(data.error || "读取房间失败");
-      setRoom((current) => !current || data.version >= current.version ? data : current);
+      setServerRoom((current) => !current || data.version >= current.version ? data : current);
     } catch (e) {
       if (!quiet) setError(e instanceof Error ? e.message : "连接失败");
     }
-  }, []);
+  }, [localMode]);
 
   useEffect(() => {
     const code = window.location.hash.slice(1).toUpperCase();
@@ -234,10 +304,10 @@ export default function Game() {
   }, [refresh]);
 
   useEffect(() => {
-    if (!room?.code) return;
+    if (!room?.code || localMode) return;
     const timer = window.setInterval(() => refresh(room.code, true), 1500);
     return () => window.clearInterval(timer);
-  }, [room?.code, refresh]);
+  }, [room?.code, refresh, localMode]);
 
   useEffect(() => {
     if (!room?.code) return;
@@ -342,14 +412,29 @@ export default function Game() {
     setCopied(true); window.setTimeout(() => setCopied(false), 1400);
   };
 
+  const startLocalGame = () => {
+    const pname = name.trim() || "玩家一";
+    setLocalMode(true);
+    setLocalState(createLobby(pname, maxPlayers, "local-host"));
+    setServerRoom(null);
+  };
+
+  const exitGame = () => {
+    window.location.hash = "";
+    setServerRoom(null);
+    setLocalState(null);
+    setLocalMode(false);
+    setLocalPass(false);
+  };
+
   const reconnectKnownPlayer = async () => {
     if (!room) return;
     const storedToken = localStorage.getItem(`silk-token-${room.code}`);
-    if (!storedToken) { setRoom(null); return; }
+    if (!storedToken) { setServerRoom(null); return; }
     const playerId = localStorage.getItem(`silk-player-${room.code}`);
     const player = room.state.players.find((p) => p.id === playerId);
     if (player) { setName(player.name); return; }
-    setRoom(null);
+    setServerRoom(null);
   };
 
   if (!room || (!me && room.state.status !== "lobby")) {
@@ -397,6 +482,8 @@ export default function Game() {
             <input aria-label="房间码" value={joinCode} maxLength={6} onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} placeholder="六位房间码" />
             <button disabled={busy || !name.trim() || joinCode.length !== 6} onClick={() => request({ command: "join", name, code: joinCode })}>加入</button>
           </div>
+          <div className="divider"><span>或离线游玩</span></div>
+          <button className="primary wide offline-entry" onClick={startLocalGame}>✈️ 离线游戏（飞机模式）<small>无需网络 · 可对战人机或同屏轮流</small></button>
         </div>}
         {room && !me && room.state.status === "lobby" && <button className="text-button" onClick={reconnectKnownPlayer}>返回已有席位</button>}
         {authError && <div className="error-box">{authError}</div>}
@@ -419,7 +506,7 @@ export default function Game() {
   if (room.state.status === "lobby") {
     const isHost = me.id === room.state.hostId;
     return <main className={`lobby-shell theme-${visualTheme}`}>
-      <header className="topbar"><div className="wordmark">香料商路</div><div className="header-actions"><ThemeSwitcher value={visualTheme} onChange={setVisualTheme} /><button className="room-code" onClick={copyInvite}><small>房间码</small>{room.code}<span>{copied ? "已复制" : "复制邀请"}</span></button></div></header>
+      <header className="topbar"><div className="wordmark">香料商路</div><div className="header-actions"><ThemeSwitcher value={visualTheme} onChange={setVisualTheme} />{localMode ? <span className="offline-badge">✈️ 离线模式</span> : <button className="room-code" onClick={copyInvite}><small>房间码</small>{room.code}<span>{copied ? "已复制" : "复制邀请"}</span></button>}</div></header>
       <section className="lobby-panel">
         <p className="eyebrow">等待商队集结</p><h1>{room.state.players.length} / {room.state.maxPlayers} 位玩家</h1>
         <div className="seats">
@@ -436,6 +523,10 @@ export default function Game() {
           <div><b>添加人机对手</b><small>可与真人混合对战</small></div>
           {(["easy", "normal", "hard"] as BotDifficulty[]).map((difficulty) => <button key={difficulty} disabled={busy || room.state.players.length >= room.state.maxPlayers} onClick={() => request({ command: "addBot", code: room.code, token, difficulty })}>{botLabels[difficulty]}</button>)}
         </div>}
+        {localMode && isHost && <div className="local-add-row">
+          <input aria-label="同屏玩家昵称" value={localAddName} maxLength={12} placeholder="同屏玩家昵称（传设备轮流玩）" onChange={(e) => setLocalAddName(e.target.value)} />
+          <button disabled={busy || !localAddName.trim() || room.state.players.length >= room.state.maxPlayers} onClick={() => { request({ command: "join", name: localAddName.trim() }); setLocalAddName(""); }}>添加同屏玩家</button>
+        </div>}
         {!CARD_CATALOG_READY && <div className="catalog-lobby-note">卡牌已清空，等待新卡录入后开放游戏。</div>}
         {isHost ? <button className="primary start-button" disabled={busy || room.state.players.length < 2 || !CARD_CATALOG_READY} onClick={() => request({ command: "start", code: room.code, token })}>{CARD_CATALOG_READY ? "开始游戏" : "等待卡牌录入"}</button>
           : <div className="waiting-pulse"><i />等待房主开始游戏</div>}
@@ -446,7 +537,20 @@ export default function Game() {
 
   if (!CARD_CATALOG_READY) {
     return <main className={`catalog-shell theme-${visualTheme}`}>
-      <section className="catalog-empty-state"><div className="empty-card-stack"><i /><i /><i /></div><p className="eyebrow">卡牌库整理中</p><h1>所有旧卡已移除</h1><p>当前对局已暂停。等待新卡片按顺序录入后，即可重新开始游戏。</p><button className="primary" onClick={() => { window.location.hash = ""; setRoom(null); }}>返回首页</button></section>
+      <section className="catalog-empty-state"><div className="empty-card-stack"><i /><i /><i /></div><p className="eyebrow">卡牌库整理中</p><h1>所有旧卡已移除</h1><p>当前对局已暂停。等待新卡片按顺序录入后，即可重新开始游戏。</p><button className="primary" onClick={exitGame}>返回首页</button></section>
+    </main>;
+  }
+
+  if (localMode && localPass && room.state.status === "playing" && me && !me.isBot) {
+    return <main className={`lobby-shell theme-${visualTheme}`}>
+      <section className="pass-screen">
+        <span className="avatar big" style={{ background: me.color }}>{me.avatar ?? me.name.slice(0, 1)}</span>
+        <p className="eyebrow">轮到你了</p>
+        <h1>{me.name}</h1>
+        <p>请把设备交给 <b>{me.name}</b>，其他人先别看屏幕</p>
+        <button className="primary" onClick={() => setLocalPass(false)}>开始回合</button>
+        {error && <div className="error-box">{error}</div>}
+      </section>
     </main>;
   }
 
@@ -460,7 +564,7 @@ export default function Game() {
     <header className="game-header">
       <div className="wordmark">香料商路</div>
       <div className="round-info"><span>第 {state.round} 轮</span><b>{state.status === "finished" ? "结算" : mustDiscard ? "请选择放回的香料" : isMyTurn ? "轮到你行动" : `等待 ${current.name}`}</b>{state.finalRound && <em>最后一轮</em>}</div>
-      <div className="header-actions"><ThemeSwitcher value={visualTheme} onChange={setVisualTheme} /><button className="room-code mini" onClick={copyInvite}><small>房间</small>{state.status === "finished" ? "战报" : room.code}</button></div>
+      <div className="header-actions"><ThemeSwitcher value={visualTheme} onChange={setVisualTheme} />{localMode ? <span className="offline-badge mini">✈️ 离线</span> : <button className="room-code mini" onClick={copyInvite}><small>房间</small>{state.status === "finished" ? "战报" : room.code}</button>}</div>
     </header>
 
     <aside className="players-panel">
@@ -508,7 +612,7 @@ export default function Game() {
     {modal && <ActionModal modal={modal} setModal={setModal} meSpices={me.spices} onConfirm={sendAction} busy={busy} />}
     {state.status === "finished" && <div className="result-backdrop"><section className="result-card"><p className="eyebrow">商路结算</p><h1>{state.winnerIds.includes(me.id) ? "你赢得了商路盛誉" : `${ranking[0].name} 赢得了胜利`}</h1>
       <div className="ranking">{ranking.map((p, i) => <div className={state.winnerIds.includes(p.id) ? "winner" : ""} key={p.id}><span>{i + 1}</span><i className="avatar" style={{ background: p.color }}>{p.avatar ?? p.name.slice(0, 1)}</i><b>{p.name}</b><small>{p.orders.length} 张订单</small><strong>{scorePlayer(p)} 分</strong></div>)}</div>
-      <button className="primary" onClick={() => { window.location.hash = ""; setRoom(null); }}>返回首页</button>
+      <button className="primary" onClick={exitGame}>返回首页</button>
     </section></div>}
   </main>;
 }

@@ -4,11 +4,19 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>香料商路｜在线桌游</title>
-    <meta name="description" content="和朋友在线经营商队、交易香料、完成订单。" />
+    <meta name="description" content="和朋友在线经营商队、交易香料、完成订单。支持离线与同屏游玩。" />
+    <meta name="theme-color" content="#71382f" />
     <link rel="icon" href="/favicon.svg" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/main.tsx"></script>
+    <script>
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("/sw.js").catch(function () {});
+      }
+    </script>
   </body>
 </html>

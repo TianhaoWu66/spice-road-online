@@ -413,3 +413,17 @@ input, select { border: 1px solid #d7c6aa; background: #fffdf7; color: var(--ink
   .upgrade-options button, .payment-options button { min-height: 44px; }
   .result-card { max-height: calc(100svh - 16px); overflow-y: auto; padding: 18px 24px; }
 }
+
+/* ===== 离线模式（飞机模式） ===== */
+.offline-entry { margin-top: 12px; background: linear-gradient(135deg, #315d58, #1d3f3d); border-color: rgba(255,255,255,.18); }
+.offline-entry small { display: block; font-weight: 400; font-size: 12px; opacity: .82; margin-top: 2px; }
+.offline-badge { display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; border-radius: 999px; background: rgba(255,248,232,.1); color: #fff8e8; font-size: 13px; font-weight: 700; border: 1px solid rgba(255,255,255,.25); white-space: nowrap; }
+.offline-badge.mini { padding: 4px 10px; font-size: 12px; }
+.local-add-row { display: flex; gap: 8px; align-items: center; margin: 12px 0 4px; }
+.local-add-row input { flex: 1; min-width: 0; }
+.pass-screen { min-height: 72vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; padding: 32px; }
+.pass-screen .avatar.big { width: 76px; height: 76px; font-size: 34px; border-radius: 50%; display: grid; place-items: center; color: #fff; box-shadow: var(--shadow); }
+.pass-screen h1 { margin: 0; font-size: 44px; }
+.pass-screen p { color: rgba(255,248,232,.72); }
+.pass-screen p b { color: #fff8e8; }
+.pass-screen .primary { margin-top: 14px; }

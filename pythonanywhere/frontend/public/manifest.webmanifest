@@ -1,0 +1,13 @@
+{
+  "name": "香料商路｜在线桌游",
+  "short_name": "香料商路",
+  "description": "在线香料贸易桌游：招募商人、转换香料、完成订单。支持离线与同屏游玩。",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#201713",
+  "theme_color": "#71382f",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
