@@ -253,8 +253,8 @@ export function startGame(state: GameState): GameState {
   state.orderMarket = orderDeck.splice(0, 5);
   state.merchantDeck = merchantDeck;
   state.orderDeck = orderDeck;
-  state.goldSupply = state.players.length * 2;
-  state.silverSupply = state.players.length * 2;
+  state.goldSupply = 10;
+  state.silverSupply = 10;
   state.status = "playing";
   state.log.push("商路开启，第一轮开始");
   return state;
