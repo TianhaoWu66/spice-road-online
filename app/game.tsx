@@ -28,6 +28,14 @@ const spiceClass = ["yellow", "red", "green", "brown"];
 const botLabels: Record<BotDifficulty, string> = { easy: "简单", normal: "普通", hard: "困难" };
 const themeLabels: Record<VisualTheme, string> = { parchment: "羊皮纸", night: "夜市", celadon: "青瓷" };
 
+// 三国杀式环桌座位：seat 0 是自己（底部），其余按行动顺序环绕棋盘
+const TABLE_SLOTS: Record<number, string[]> = {
+  2: ["slot-top"],
+  3: ["slot-top-left", "slot-top-right"],
+  4: ["slot-top-left", "slot-top", "slot-top-right"],
+  5: ["slot-left", "slot-top-left", "slot-top", "slot-top-right"],
+};
+
 const CHAT_AUDIO: Record<string, string> = {
   "老叟戏顽童": "/audio/laoshouxiwantong.mp3",
   "你粥": "/audio/nizhou.mp3",
@@ -887,6 +895,12 @@ export default function Game() {
   const ranking = [...state.players].sort((a, b) => scorePlayer(b) - scorePlayer(a));
   const latestActions = new Map<string, ActionEvent>();
   (state.actionEvents ?? []).forEach((event) => latestActions.set(event.playerId, event));
+  const totalPlayers = state.players.length;
+  const seatSlot = (index: number): string | null => {
+    const seat = (index - myIndex + totalPlayers) % totalPlayers;
+    if (seat === 0) return null;
+    return (TABLE_SLOTS[totalPlayers] ?? ["top"])[seat - 1] ?? "top";
+  };
 
   return <main className={`game-shell theme-${visualTheme}`}>
     <header className="game-header">
@@ -895,48 +909,63 @@ export default function Game() {
       <div className="header-actions"><ThemeSwitcher value={visualTheme} onChange={setVisualTheme} />{localMode ? <span className="offline-badge mini">✈️ 离线</span> : hotspotRole !== "off" ? <span className="offline-badge mini">{hotspotRole === "host" ? "📡 房主" : "📶 热点"}</span> : <button className="room-code mini" onClick={copyInvite}><small>房间</small>{state.status === "finished" ? "战报" : room.code}</button>}</div>
     </header>
 
-    <aside className="players-panel">
-      {state.players.map((p, index) => <div className={`player-strip ${index === state.currentPlayer && state.status === "playing" ? "active" : ""} ${p.id === me.id ? "me" : ""}`} key={p.id}>
-        <span className="avatar" style={{ background: p.color }}>{p.avatar ?? p.name.slice(0, 1)}</span>
-        <div className="player-meta"><b>{p.name}{p.id === me.id && <small> 你</small>}{p.isBot && <small> · {p.afkSince ? "AI代管中" : `${botLabels[p.botDifficulty ?? "normal"]}人机`}</small>}</b><SpiceRow values={p.spices} compact /></div>
-        <div className="player-score"><b>{scorePlayer(p)}</b><small>分 · {p.orders.length} 单</small></div>
-        {hotspotRole === "host" && p.id !== hostSelfId && !p.isBot && state.status === "playing" && <button className="afk-kick" onClick={() => markPlayerAfk(p.id)}>代管</button>}
-        {latestActions.has(p.id) && <LastActionBadge event={latestActions.get(p.id)!} />}
-        {activeChat?.playerId === p.id && <div className="player-speech"><b>{activeChat.phrase}</b><span>🔊</span></div>}
-      </div>)}
-      <div className="quick-chat"><b>语音快捷聊</b>{CHAT_PHRASES.map((phrase) => <button disabled={busy} key={phrase} onClick={() => request({ command: "chat", code: room.code, token, phrase: phrase as ChatPhrase })}><span>🔊</span>{phrase}</button>)}</div>
-    </aside>
+    <section className="table">
+      <section className="board">
+        <div className="market-heading"><div><span>订单市场</span><small>支付香料，赢取声望</small></div><div className="coin-bank"><span className="coin gold">{state.goldSupply}</span><span className="coin silver">{state.silverSupply}</span></div></div>
+        <div className="orders-row">
+          {state.orderMarket.map((id, index) => <button className="order-card" key={id} disabled={!isMyTurn || !canAfford(me.spices, ORDER_CARDS[id].cost)} onClick={() => sendAction({ type: "CLAIM", orderIndex: index })}>
+            {index === 0 && state.goldSupply > 0 && <span className="coin-float gold">+3</span>}
+            {((index === 1 && state.goldSupply > 0) || (index === 0 && state.goldSupply === 0)) && state.silverSupply > 0 && <span className="coin-float silver">+1</span>}
+            <OrderFace orderId={id} />
+          </button>)}
+        </div>
 
-    <section className="board">
-      <div className="market-heading"><div><span>订单市场</span><small>支付香料，赢取声望</small></div><div className="coin-bank"><span className="coin gold">{state.goldSupply}</span><span className="coin silver">{state.silverSupply}</span></div></div>
-      <div className="orders-row">
-        {state.orderMarket.map((id, index) => <button className="order-card" key={id} disabled={!isMyTurn || !canAfford(me.spices, ORDER_CARDS[id].cost)} onClick={() => sendAction({ type: "CLAIM", orderIndex: index })}>
-          {index === 0 && state.goldSupply > 0 && <span className="coin-float gold">+3</span>}
-          {((index === 1 && state.goldSupply > 0) || (index === 0 && state.goldSupply === 0)) && state.silverSupply > 0 && <span className="coin-float silver">+1</span>}
-          <OrderFace orderId={id} />
-        </button>)}
+        <div className="market-heading merchant-title"><div><span>商人市场</span><small>越靠右，招募费用越高</small></div></div>
+        <div className="merchant-row">
+          {state.merchantMarket.map((slot, index) => <button className={`merchant-card market-card card-${MERCHANT_CARDS[slot.cardId].type}`} disabled={!isMyTurn} key={slot.cardId} onClick={() => acquire(index)}>
+            <span className="market-cost">{index === 0 ? "免费" : `支付 ${index}`}</span>
+            <MerchantFace card={MERCHANT_CARDS[slot.cardId]} bonus={slot.bonus} />
+          </button>)}
+        </div>
+      </section>
+
+      <div className="seats-layer">
+        {state.players.map((p, index) => {
+          const slot = seatSlot(index);
+          if (!slot) return null;
+          return <div className={`player-seat ${slot} ${index === state.currentPlayer && state.status === "playing" ? "active" : ""}`} key={p.id}>
+            <div className={`player-strip ${p.id === me.id ? "me" : ""}`}>
+              <span className="avatar" style={{ background: p.color }}>{p.avatar ?? p.name.slice(0, 1)}</span>
+              <div className="player-meta"><b>{p.name}{p.isBot && <small> · {p.afkSince ? "AI代管中" : `${botLabels[p.botDifficulty ?? "normal"]}人机`}</small>}</b><SpiceRow values={p.spices} compact /></div>
+              <div className="player-score"><b>{scorePlayer(p)}</b><small>分 · {p.orders.length} 单</small></div>
+              {hotspotRole === "host" && p.id !== hostSelfId && !p.isBot && state.status === "playing" && <button className="afk-kick" onClick={() => markPlayerAfk(p.id)}>代管</button>}
+            </div>
+            {latestActions.has(p.id) && <LastActionBadge event={latestActions.get(p.id)!} />}
+            {activeChat?.playerId === p.id && <div className="player-speech"><b>{activeChat.phrase}</b><span>🔊</span></div>}
+          </div>;
+        })}
       </div>
 
-      <div className="market-heading merchant-title"><div><span>商人市场</span><small>越靠右，招募费用越高</small></div></div>
-      <div className="merchant-row">
-        {state.merchantMarket.map((slot, index) => <button className={`merchant-card market-card card-${MERCHANT_CARDS[slot.cardId].type}`} disabled={!isMyTurn} key={slot.cardId} onClick={() => acquire(index)}>
-          <span className="market-cost">{index === 0 ? "免费" : `支付 ${index}`}</span>
-          <MerchantFace card={MERCHANT_CARDS[slot.cardId]} bonus={slot.bonus} />
-        </button>)}
-      </div>
+      <aside className="game-log"><b>商路动态</b>{state.log.slice(-7).reverse().map((line, i) => <p key={`${line}-${i}`}>{line}</p>)}</aside>
     </section>
 
-    <section className="hand-panel">
-      <div className="hand-head"><div><span>你的商队</span><SpiceRow values={me.spices} /></div><div className="wallet"><span className="coin gold">{me.gold}</span><span className="coin silver">{me.silver}</span></div></div>
-      <div className="hand-row">
-        {me.hand.map((cardId) => <button className={`merchant-card hand-card card-${MERCHANT_CARDS[cardId].type}`} disabled={!isMyTurn} key={cardId} onClick={() => handleCard(cardId)}><MerchantFace card={MERCHANT_CARDS[cardId]} /></button>)}
-        {!me.hand.length && <div className="empty-hand">手牌已全部打出</div>}
+    <section className="me-area">
+      <div className="me-strip">
+        <span className="avatar" style={{ background: me.color }}>{me.avatar ?? me.name.slice(0, 1)}</span>
+        <div className="player-meta"><b>{me.name}<small> 你</small></b><span className="me-score">{scorePlayer(me)} 分 · {me.orders.length} 单</span></div>
+        <div className="quick-chat"><b>语音快捷聊</b><div className="quick-chat-row">{CHAT_PHRASES.map((phrase) => <button disabled={busy} key={phrase} onClick={() => request({ command: "chat", code: room.code, token, phrase: phrase as ChatPhrase })}><span>🔊</span>{phrase}</button>)}</div></div>
       </div>
-      <button className="rest-button" disabled={!isMyTurn || !me.played.length} onClick={() => sendAction({ type: "REST" })}><span>☾</span>休息并收回 {me.played.length} 张牌</button>
+      <section className="hand-panel">
+        <div className="hand-head"><div><span>你的商队</span><SpiceRow values={me.spices} /></div><div className="wallet"><span className="coin gold">{me.gold}</span><span className="coin silver">{me.silver}</span></div></div>
+        <div className="hand-row">
+          {me.hand.map((cardId) => <button className={`merchant-card hand-card card-${MERCHANT_CARDS[cardId].type}`} disabled={!isMyTurn} key={cardId} onClick={() => handleCard(cardId)}><MerchantFace card={MERCHANT_CARDS[cardId]} /></button>)}
+          {!me.hand.length && <div className="empty-hand">手牌已全部打出</div>}
+        </div>
+        <button className="rest-button" disabled={!isMyTurn || !me.played.length} onClick={() => sendAction({ type: "REST" })}><span>☾</span>休息并收回 {me.played.length} 张牌</button>
+      </section>
     </section>
 
-    <aside className="game-log"><b>商路动态</b>{state.log.slice(-7).reverse().map((line, i) => <p key={`${line}-${i}`}>{line}</p>)}</aside>
-    {error && <div className="toast" onClick={() => setError("")}>{error}</div>}
+{error && <div className="toast" onClick={() => setError("")}>{error}</div>}
     {activeEvent && <ActionReveal key={activeEvent.id} event={activeEvent} />}
     {modal && <ActionModal modal={modal} setModal={setModal} meSpices={me.spices} onConfirm={sendAction} busy={busy} />}
     {state.status === "finished" && <div className="result-backdrop"><section className="result-card"><p className="eyebrow">商路结算</p><h1>{state.winnerIds.includes(me.id) ? "你赢得了商路盛誉" : `${ranking[0].name} 赢得了胜利`}</h1>
