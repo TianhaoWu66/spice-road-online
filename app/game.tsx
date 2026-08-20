@@ -7,8 +7,14 @@ import {
   addBot, addPlayer, applyGameAction, createLobby, removeBot, runBotTurns, sendChat, startGame,
 } from "../lib/game";
 import { PROFILE_AVATARS, ProfileAvatar } from "../lib/profile";
+import {
+  acceptHostAnswer, createHostPairing, joinHost, parseMessage, qrDataUrl, redactState,
+  type HotspotMessage,
+} from "../lib/hotspot";
 
 type RoomResponse = { code: string; version: number; token?: string; playerId?: string; state: GameState; error?: string };
+type HotspotRole = "off" | "host" | "player";
+type HostPairing = { id: string; offerCode: string; qr: string; pc: RTCPeerConnection; channel: RTCDataChannel; status: "waiting" | "connected" | "failed"; answerInput: string };
 type AccountProfile = { id: string; username: string; nickname: string; avatar: ProfileAvatar };
 type AuthMode = "guest" | "login" | "register";
 type VisualTheme = "parchment" | "night" | "celadon";
@@ -142,6 +148,20 @@ export default function Game() {
   const [localPass, setLocalPass] = useState(false);
   const [localAddName, setLocalAddName] = useState("");
   const lastLocalActor = useRef<string | null>(null);
+  const [hotspotRole, setHotspotRole] = useState<HotspotRole>("off");
+  const [hostPairings, setHostPairings] = useState<HostPairing[]>([]);
+  const [hostConnections, setHostConnections] = useState<Array<{ id: string; name: string }>>([]);
+  const [playerName, setPlayerName] = useState("");
+  const [hostCodeInput, setHostCodeInput] = useState("");
+  const [playerAnswerCode, setPlayerAnswerCode] = useState("");
+  const [playerQr, setPlayerQr] = useState("");
+  const [playerStatus, setPlayerStatus] = useState("");
+  const [myPlayerId, setMyPlayerId] = useState("");
+  const [playerState, setPlayerState] = useState<GameState | null>(null);
+  const [playerVersion, setPlayerVersion] = useState(0);
+  const hotspotConns = useRef<Map<RTCDataChannel, { name: string; playerId: string }>>(new Map());
+  const playerChannelRef = useRef<RTCDataChannel | null>(null);
+  const localStateRef = useRef<GameState | null>(null);
   const [name, setName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [maxPlayers, setMaxPlayers] = useState(5);
@@ -164,28 +184,42 @@ export default function Game() {
   const [password, setPassword] = useState("");
   const [registerNickname, setRegisterNickname] = useState("");
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
-  const room = localMode ? (localState ? { code: "LOCAL", version: 0, state: localState } as RoomResponse : null) : serverRoom;
+  const room = hotspotRole === "player"
+    ? (playerState ? { code: "HOT", version: playerVersion, state: playerState } as RoomResponse : null)
+    : hotspotRole === "host"
+      ? (localState ? { code: "HOST", version: 0, state: localState } as RoomResponse : null)
+      : localMode
+        ? (localState ? { code: "LOCAL", version: 0, state: localState } as RoomResponse : null)
+        : serverRoom;
+  localStateRef.current = localState;
   const observedEventId = useRef<number | null>(null);
   const observedRoomCode = useRef<string | null>(null);
   const observedChatId = useRef<number | null>(null);
   const observedChatRoomCode = useRef<string | null>(null);
 
-  const token = localMode ? "local" : (typeof window !== "undefined" ? localStorage.getItem(`silk-token-${room?.code}`) ?? "" : "");
-  const me = localMode
-    ? (room ? room.state.players[room.state.currentPlayer] : undefined)
-    : room?.state.players.find((p) => p.id === localStorage.getItem(`silk-player-${room?.code}`));
-  const myIndex = localMode ? (room?.state.currentPlayer ?? -1) : (room?.state.players.findIndex((p) => p.id === me?.id) ?? -1);
+  const token = localMode || hotspotRole !== "off" ? "local" : (typeof window !== "undefined" ? localStorage.getItem(`silk-token-${room?.code}`) ?? "" : "");
+  const hostSelfId = localState?.players[0]?.id ?? "";
+  const me = hotspotRole === "player"
+    ? room?.state.players.find((p) => p.id === myPlayerId)
+    : hotspotRole === "host"
+      ? room?.state.players.find((p) => p.id === hostSelfId)
+      : localMode
+        ? (room ? room.state.players[room.state.currentPlayer] : undefined)
+        : room?.state.players.find((p) => p.id === localStorage.getItem(`silk-player-${room?.code}`));
+  const myIndex = hotspotRole !== "off"
+    ? (room?.state.players.findIndex((p) => p.id === me?.id) ?? -1)
+    : localMode ? (room?.state.currentPlayer ?? -1) : (room?.state.players.findIndex((p) => p.id === me?.id) ?? -1);
   const pendingDiscard = room?.state.pendingDiscard;
   const mustDiscard = pendingDiscard?.playerId === me?.id;
   const isMyTurn = room?.state.status === "playing" && room.state.currentPlayer === myIndex && !mustDiscard && !activeEvent && actionQueue.length === 0;
 
   useEffect(() => {
-    if (localMode) { setAuthReady(true); return; }
+    if (localMode || hotspotRole !== "off") { setAuthReady(true); return; }
     fetch("/api/auth", { cache: "no-store" }).then(async (response) => {
       const data = await response.json() as { user?: AccountProfile | null };
       if (data.user) { setAccount(data.user); setName(data.user.nickname); }
     }).catch(() => {}).finally(() => setAuthReady(true));
-  }, [localMode]);
+  }, [localMode, hotspotRole]);
 
   const accountRequest = async (action: "register" | "login" | "logout" | "avatar", avatar?: ProfileAvatar) => {
     setAuthBusy(true); setAuthError("");
@@ -204,6 +238,201 @@ export default function Game() {
     } finally { setAuthBusy(false); }
   };
 
+  const broadcastHotspot = useCallback((state: GameState) => {
+    const now = Date.now();
+    hotspotConns.current.forEach((conn, channel) => {
+      if (channel.readyState === "open" && conn.playerId) {
+        try {
+          channel.send(JSON.stringify({ type: "state", state: redactState(state, conn.playerId), version: now } satisfies HotspotMessage));
+        } catch { /* 忽略 */ }
+      }
+    });
+  }, []);
+
+  const commitLocal = useCallback((next: GameState) => {
+    setLocalState(next);
+    if (hotspotRole === "host") broadcastHotspot(next);
+  }, [hotspotRole, broadcastHotspot]);
+
+  const markPlayerAfk = useCallback((playerId: string) => {
+    const st = localStateRef.current;
+    if (!st || st.status !== "playing") return;
+    const next = structuredClone(st) as GameState;
+    const seat = next.players.find((candidate) => candidate.id === playerId);
+    if (seat && !seat.isBot) {
+      seat.isBot = true; seat.botDifficulty = "normal"; seat.afkSince = Date.now();
+      next.log.push(`${seat.name} 掉线，由 AI 代管`);
+      commitLocal(next);
+    }
+  }, [commitLocal]);
+
+  const handleHostChannelMessage = useCallback((channel: RTCDataChannel, raw: string) => {
+    let msg: HotspotMessage;
+    try { msg = parseMessage(raw); } catch { return; }
+    const entry = hotspotConns.current.get(channel);
+    if (msg.type === "hello") {
+      const base = localStateRef.current;
+      if (!base || base.status !== "lobby") {
+        try { channel.send(JSON.stringify({ type: "error", message: "游戏已开始，暂不能入座" } satisfies HotspotMessage)); } catch { /* 忽略 */ }
+        return;
+      }
+      if (base.players.length >= base.maxPlayers) {
+        try { channel.send(JSON.stringify({ type: "error", message: "房间已满" } satisfies HotspotMessage)); } catch { /* 忽略 */ }
+        return;
+      }
+      const next = structuredClone(base) as GameState;
+      addPlayer(next, String(msg.name ?? "").trim().slice(0, 12) || "玩家", `hot-${Date.now()}`, undefined);
+      const seat = next.players[next.players.length - 1];
+      if (entry) { entry.playerId = seat.id; entry.name = seat.name; }
+      setLocalState(next);
+      try {
+        channel.send(JSON.stringify({ type: "welcome", playerId: seat.id, code: "HOT", name: seat.name, color: seat.color, avatar: seat.avatar } satisfies HotspotMessage));
+      } catch { /* 忽略 */ }
+      broadcastHotspot(next);
+      setHostConnections(Array.from(hotspotConns.current.values()).map((c) => ({ id: c.playerId, name: c.name })));
+      return;
+    }
+    if (!entry?.playerId) return;
+    if (msg.type === "action") {
+      const base = localStateRef.current;
+      if (!base || base.status !== "playing") return;
+      const actor = base.players[base.currentPlayer];
+      if (actor.id !== entry.playerId) {
+        try { channel.send(JSON.stringify({ type: "error", message: "还没轮到你" } satisfies HotspotMessage)); } catch { /* 忽略 */ }
+        return;
+      }
+      const next = structuredClone(base) as GameState;
+      try { applyGameAction(next, actor.id, msg.action); runBotTurns(next); }
+      catch (e) {
+        try { channel.send(JSON.stringify({ type: "error", message: e instanceof Error ? e.message : "操作失败" } satisfies HotspotMessage)); } catch { /* 忽略 */ }
+        return;
+      }
+      commitLocal(next);
+      return;
+    }
+    if (msg.type === "chat") {
+      const base = localStateRef.current;
+      if (!base || base.status !== "playing") return;
+      const actor = base.players.find((p) => p.id === entry.playerId);
+      if (!actor) return;
+      const next = structuredClone(base) as GameState;
+      try { sendChat(next, actor.id, msg.phrase); } catch { return; }
+      commitLocal(next);
+    }
+  }, [broadcastHotspot, commitLocal]);
+
+  const playerRequest = useCallback(async (body: Record<string, unknown>) => {
+    const channel = playerChannelRef.current;
+    if (!channel || channel.readyState !== "open") { setError("热点连接已断开"); return null; }
+    try {
+      const command = body.command;
+      if (command === "action" && body.action) {
+        channel.send(JSON.stringify({ type: "action", action: body.action } satisfies HotspotMessage));
+        return { code: "HOT", version: 0, state: playerState! } as RoomResponse;
+      }
+      if (command === "chat" && body.phrase) {
+        channel.send(JSON.stringify({ type: "chat", phrase: body.phrase } satisfies HotspotMessage));
+        return { code: "HOT", version: 0, state: playerState! } as RoomResponse;
+      }
+    } catch { setError("发送失败"); }
+    return null;
+  }, [playerState]);
+
+  const startHostMode = () => {
+    const pname = name.trim() || "房主";
+    setHotspotRole("host");
+    setLocalState(createLobby(pname, maxPlayers, "host-self"));
+    setServerRoom(null);
+  };
+
+  const addHostPairing = async () => {
+    setBusy(true); setError("");
+    try {
+      const { offerCode, pc, channel } = await createHostPairing();
+      const id = `pair-${Date.now()}`;
+      const qr = await qrDataUrl(offerCode);
+      channel.onopen = () => {
+        setHostPairings((list) => list.map((p) => p.id === id ? { ...p, status: "connected" } : p));
+        hotspotConns.current.set(channel, { name: "", playerId: "" });
+        setHostConnections([]);
+      };
+      channel.onmessage = (event) => handleHostChannelMessage(channel, String(event.data));
+      channel.onclose = () => {
+        const entry = hotspotConns.current.get(channel);
+        hotspotConns.current.delete(channel);
+        setHostPairings((list) => list.map((p) => p.channel === channel ? { ...p, status: "failed" } : p));
+        setHostConnections(Array.from(hotspotConns.current.values()).map((c) => ({ id: c.playerId, name: c.name })));
+        if (entry?.playerId) markPlayerAfk(entry.playerId);
+      };
+      setHostPairings((list) => [...list, { id, offerCode, qr, pc, channel, status: "waiting", answerInput: "" }]);
+    } catch (e) { setError(e instanceof Error ? e.message : "生成配对码失败"); }
+    finally { setBusy(false); }
+  };
+
+  useEffect(() => {
+    if (hotspotRole !== "host") return;
+    const timer = window.setInterval(() => {
+      hotspotConns.current.forEach((entry, channel) => {
+        if (entry.playerId && channel.readyState === "closed") {
+          const pid = entry.playerId;
+          hotspotConns.current.delete(channel);
+          markPlayerAfk(pid);
+        }
+      });
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [hotspotRole, markPlayerAfk]);
+
+  const acceptPairingAnswer = async (pairingId: string, answerCode: string) => {
+    setBusy(true); setError("");
+    try {
+      const pairing = hostPairings.find((p) => p.id === pairingId);
+      if (!pairing) throw new Error("配对不存在");
+      await acceptHostAnswer(pairing.pc, answerCode.trim());
+      setHostPairings((list) => list.map((p) => p.id === pairingId ? { ...p, answerInput: "" } : p));
+    } catch (e) { setError(e instanceof Error ? e.message : "应答码无效"); }
+    finally { setBusy(false); }
+  };
+
+  const startPlayerSetup = () => {
+    setHotspotRole("player");
+    setServerRoom(null);
+  };
+
+  const connectToHost = async () => {
+    if (!playerName.trim()) { setError("请输入昵称"); return; }
+    setBusy(true); setError(""); setPlayerStatus("正在连接…");
+    try {
+      const { answerCode, pc, channel: channelPromise } = await joinHost(hostCodeInput.trim());
+      setPlayerAnswerCode(answerCode);
+      setPlayerQr(await qrDataUrl(answerCode));
+      setPlayerStatus("等待房主输入应答码…");
+      const channel = await channelPromise;
+      playerChannelRef.current = channel;
+      channel.onopen = () => {
+        setPlayerStatus("已连接，等待入座…");
+        channel.send(JSON.stringify({ type: "hello", name: playerName.trim().slice(0, 12) } satisfies HotspotMessage));
+      };
+      channel.onmessage = (event) => {
+        let msg: HotspotMessage;
+        try { msg = parseMessage(String(event.data)); } catch { return; }
+        if (msg.type === "welcome") {
+          setMyPlayerId(msg.playerId);
+          setPlayerStatus("已入座");
+        } else if (msg.type === "state") {
+          setPlayerState(msg.state);
+          setPlayerVersion(msg.version);
+        } else if (msg.type === "error") {
+          setError(msg.message);
+        }
+      };
+      channel.onclose = () => { setPlayerStatus("连接已断开"); };
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "连接失败，请检查邀请码");
+      setPlayerStatus("");
+    } finally { setBusy(false); }
+  };
+
   const localRequest = useCallback(async (body: Record<string, unknown>) => {
     if (!localState) return null;
     setBusy(true); setError("");
@@ -215,26 +444,26 @@ export default function Game() {
         if (!pname) throw new Error("请输入昵称");
         if (next.status !== "lobby") throw new Error("游戏已经开始");
         addPlayer(next, pname, `local-${next.players.length}`, undefined);
-        setLocalState(next);
+        commitLocal(next);
         return { code: "LOCAL", version: 0, state: next } as RoomResponse;
       }
       if (command === "addBot") {
         if (next.status !== "lobby") throw new Error("游戏已经开始");
         addBot(next, String(body.difficulty ?? "normal") as BotDifficulty);
-        setLocalState(next);
+        commitLocal(next);
         return { code: "LOCAL", version: 0, state: next } as RoomResponse;
       }
       if (command === "removeBot") {
         removeBot(next, String(body.botId ?? ""));
-        setLocalState(next);
+        commitLocal(next);
         return { code: "LOCAL", version: 0, state: next } as RoomResponse;
       }
       if (command === "start") {
         startGame(next);
         runBotTurns(next);
-        setLocalState(next);
+        commitLocal(next);
         lastLocalActor.current = null;
-        setLocalPass(next.status === "playing" && next.players.filter((p) => !p.isBot).length > 1);
+        setLocalPass(hotspotRole === "off" && next.status === "playing" && next.players.filter((p) => !p.isBot).length > 1);
         return { code: "LOCAL", version: 0, state: next } as RoomResponse;
       }
       const actor = next.players[next.currentPlayer];
@@ -242,17 +471,17 @@ export default function Game() {
       if (command === "action" && body.action) {
         applyGameAction(next, actor.id, body.action as GameAction);
         runBotTurns(next);
-        setLocalState(next);
+        commitLocal(next);
         const humanCount = next.players.filter((p) => !p.isBot).length;
         const nextActor = next.players[next.currentPlayer];
         const handoff = next.status === "playing" && humanCount > 1 && nextActor && !nextActor.isBot && nextActor.id !== lastLocalActor.current;
-        setLocalPass(handoff);
+        setLocalPass(hotspotRole === "off" && handoff);
         lastLocalActor.current = actor.id;
         return { code: "LOCAL", version: 0, state: next } as RoomResponse;
       }
       if (command === "chat" && body.phrase) {
         sendChat(next, actor.id, body.phrase as ChatPhrase);
-        setLocalState(next);
+        commitLocal(next);
         return { code: "LOCAL", version: 0, state: next } as RoomResponse;
       }
       throw new Error("未知操作");
@@ -260,10 +489,11 @@ export default function Game() {
       setError(e instanceof Error ? e.message : "操作失败");
       return null;
     } finally { setBusy(false); }
-  }, [localState]);
+  }, [localState, commitLocal, hotspotRole]);
 
   const request = useCallback(async (body: Record<string, unknown>) => {
-    if (localMode) return localRequest(body);
+    if (hotspotRole === "player") return playerRequest(body);
+    if (localMode || hotspotRole === "host") return localRequest(body);
     setBusy(true); setError("");
     try {
       const response = await fetch("/api/room", {
@@ -284,10 +514,10 @@ export default function Game() {
       setError(e instanceof Error ? e.message : "连接失败");
       return null;
     } finally { setBusy(false); }
-  }, [localMode, localRequest, name]);
+  }, [hotspotRole, playerRequest, localRequest, name]);
 
   const refresh = useCallback(async (code: string, quiet = false) => {
-    if (localMode) return;
+    if (localMode || hotspotRole !== "off") return;
     try {
       const response = await fetch(`/api/room?code=${code}`, { cache: "no-store" });
       const data = await response.json() as RoomResponse;
@@ -296,7 +526,7 @@ export default function Game() {
     } catch (e) {
       if (!quiet) setError(e instanceof Error ? e.message : "连接失败");
     }
-  }, [localMode]);
+  }, [localMode, hotspotRole]);
 
   useEffect(() => {
     const code = window.location.hash.slice(1).toUpperCase();
@@ -304,10 +534,10 @@ export default function Game() {
   }, [refresh]);
 
   useEffect(() => {
-    if (!room?.code || localMode) return;
+    if (!room?.code || localMode || hotspotRole !== "off") return;
     const timer = window.setInterval(() => refresh(room.code, true), 1500);
     return () => window.clearInterval(timer);
-  }, [room?.code, refresh, localMode]);
+  }, [room?.code, refresh, localMode, hotspotRole]);
 
   useEffect(() => {
     if (!room?.code) return;
@@ -425,6 +655,16 @@ export default function Game() {
     setLocalState(null);
     setLocalMode(false);
     setLocalPass(false);
+    setHotspotRole("off");
+    setPlayerState(null);
+    setMyPlayerId("");
+    setPlayerStatus("");
+    setPlayerAnswerCode("");
+    setPlayerQr("");
+    setHostPairings([]);
+    setHostConnections([]);
+    playerChannelRef.current = null;
+    hotspotConns.current.clear();
   };
 
   const reconnectKnownPlayer = async () => {
@@ -436,6 +676,28 @@ export default function Game() {
     if (player) { setName(player.name); return; }
     setServerRoom(null);
   };
+
+  if (hotspotRole === "player" && !playerState) {
+    return <main className={`lobby-shell theme-${visualTheme}`}>
+      <section className="hotspot-panel">
+        <p className="eyebrow">📶 加入热点房</p>
+        <h1>连接房主</h1>
+        {playerStatus && <div className="player-status">{playerStatus}</div>}
+        <label>我的昵称<input value={playerName} maxLength={12} onChange={(e) => setPlayerName(e.target.value)} placeholder="游戏中显示的名字" /></label>
+        <label>房主邀请码<textarea value={hostCodeInput} rows={4} onChange={(e) => setHostCodeInput(e.target.value)} placeholder="粘贴房主的邀请码（或用手机相机扫房主屏幕的二维码后复制）" /></label>
+        {!playerAnswerCode && <button className="primary wide" disabled={busy || !playerName.trim() || !hostCodeInput.trim()} onClick={connectToHost}>连接</button>}
+        {playerAnswerCode && <div className="answer-box">
+          <p>请把下面的 <strong>应答码</strong> 告诉房主并让他输入（或让房主扫你的二维码）</p>
+          {playerQr && <img className="pairing-qr" src={playerQr} alt="应答码二维码" />}
+          <div className="code-block">{playerAnswerCode}</div>
+          <button className="primary wide" onClick={() => navigator.clipboard.writeText(playerAnswerCode).then(() => setCopied(true))}>{copied ? "已复制" : "复制应答码"}</button>
+          <p className="hint">房主确认后会自动连接并进入房间</p>
+        </div>}
+        {error && <div className="error-box">{error}</div>}
+        <button className="text-button" onClick={exitGame}>返回</button>
+      </section>
+    </main>;
+  }
 
   if (!room || (!me && room.state.status !== "lobby")) {
     return <main className="landing-shell">
@@ -484,6 +746,11 @@ export default function Game() {
           </div>
           <div className="divider"><span>或离线游玩</span></div>
           <button className="primary wide offline-entry" onClick={startLocalGame}>✈️ 离线游戏（飞机模式）<small>无需网络 · 可对战人机或同屏轮流</small></button>
+          <div className="divider"><span>或热点联机（无外网多设备）</span></div>
+          <div className="hotspot-entries">
+            <button className="primary wide" onClick={startHostMode} disabled={busy}>📡 当房主<small>开热点，生成配对码让朋友加入</small></button>
+            <button className="primary wide ghost" onClick={startPlayerSetup}>📶 加入热点房<small>扫码或输入房主邀请码</small></button>
+          </div>
         </div>}
         {room && !me && room.state.status === "lobby" && <button className="text-button" onClick={reconnectKnownPlayer}>返回已有席位</button>}
         {authError && <div className="error-box">{authError}</div>}
@@ -506,7 +773,7 @@ export default function Game() {
   if (room.state.status === "lobby") {
     const isHost = me.id === room.state.hostId;
     return <main className={`lobby-shell theme-${visualTheme}`}>
-      <header className="topbar"><div className="wordmark">香料商路</div><div className="header-actions"><ThemeSwitcher value={visualTheme} onChange={setVisualTheme} />{localMode ? <span className="offline-badge">✈️ 离线模式</span> : <button className="room-code" onClick={copyInvite}><small>房间码</small>{room.code}<span>{copied ? "已复制" : "复制邀请"}</span></button>}</div></header>
+      <header className="topbar"><div className="wordmark">香料商路</div><div className="header-actions"><ThemeSwitcher value={visualTheme} onChange={setVisualTheme} />{localMode ? <span className="offline-badge">✈️ 离线模式</span> : hotspotRole === "host" ? <span className="offline-badge">📡 热点房主</span> : hotspotRole === "player" ? <span className="offline-badge">📶 热点玩家</span> : <button className="room-code" onClick={copyInvite}><small>房间码</small>{room.code}<span>{copied ? "已复制" : "复制邀请"}</span></button>}</div></header>
       <section className="lobby-panel">
         <p className="eyebrow">等待商队集结</p><h1>{room.state.players.length} / {room.state.maxPlayers} 位玩家</h1>
         <div className="seats">
@@ -519,6 +786,26 @@ export default function Game() {
             </div>;
           })}
         </div>
+        {hotspotRole === "host" && <section className="hotspot-host-panel">
+          <div className="hotspot-head"><b>📡 热点配对</b><small>朋友连上你的热点后，扫码或输入邀请码加入</small></div>
+          <button className="primary" disabled={busy || room.state.players.length >= room.state.maxPlayers} onClick={addHostPairing}>生成配对码</button>
+          {hostPairings.map((pairing) => <div className="pairing-card" key={pairing.id}>
+            <div className="pairing-qr">{pairing.qr && <img src={pairing.qr} alt="邀请码二维码" />}</div>
+            <div className="pairing-actions">
+              <div className="code-block">{pairing.offerCode}</div>
+              <div className="pairing-buttons">
+                <button disabled={!pairing.offerCode} onClick={() => navigator.clipboard.writeText(pairing.offerCode).then(() => setCopied(true))}>{copied ? "已复制" : "复制邀请码"}</button>
+                {pairing.status === "connected" && <span className="pairing-status ok">已连接</span>}
+                {pairing.status === "failed" && <span className="pairing-status bad">已断开</span>}
+              </div>
+              {pairing.status === "waiting" && <div className="answer-row">
+                <input value={pairing.answerInput} onChange={(e) => setHostPairings((list) => list.map((p) => p.id === pairing.id ? { ...p, answerInput: e.target.value } : p))} placeholder="粘贴玩家的应答码" />
+                <button disabled={busy || !pairing.answerInput.trim()} onClick={() => acceptPairingAnswer(pairing.id, pairing.answerInput)}>确认连接</button>
+              </div>}
+            </div>
+          </div>)}
+          {hostConnections.length > 0 && <div className="host-players"><b>已连接玩家</b>{hostConnections.map((c) => <span key={c.id}>{c.name}</span>)}</div>}
+        </section>}
         {isHost && <div className="bot-controls">
           <div><b>添加人机对手</b><small>可与真人混合对战</small></div>
           {(["easy", "normal", "hard"] as BotDifficulty[]).map((difficulty) => <button key={difficulty} disabled={busy || room.state.players.length >= room.state.maxPlayers} onClick={() => request({ command: "addBot", code: room.code, token, difficulty })}>{botLabels[difficulty]}</button>)}
@@ -564,7 +851,7 @@ export default function Game() {
     <header className="game-header">
       <div className="wordmark">香料商路</div>
       <div className="round-info"><span>第 {state.round} 轮</span><b>{state.status === "finished" ? "结算" : mustDiscard ? "请选择放回的香料" : isMyTurn ? "轮到你行动" : `等待 ${current.name}`}</b>{state.finalRound && <em>最后一轮</em>}</div>
-      <div className="header-actions"><ThemeSwitcher value={visualTheme} onChange={setVisualTheme} />{localMode ? <span className="offline-badge mini">✈️ 离线</span> : <button className="room-code mini" onClick={copyInvite}><small>房间</small>{state.status === "finished" ? "战报" : room.code}</button>}</div>
+      <div className="header-actions"><ThemeSwitcher value={visualTheme} onChange={setVisualTheme} />{localMode ? <span className="offline-badge mini">✈️ 离线</span> : hotspotRole !== "off" ? <span className="offline-badge mini">{hotspotRole === "host" ? "📡 房主" : "📶 热点"}</span> : <button className="room-code mini" onClick={copyInvite}><small>房间</small>{state.status === "finished" ? "战报" : room.code}</button>}</div>
     </header>
 
     <aside className="players-panel">
@@ -572,6 +859,7 @@ export default function Game() {
         <span className="avatar" style={{ background: p.color }}>{p.avatar ?? p.name.slice(0, 1)}</span>
         <div className="player-meta"><b>{p.name}{p.id === me.id && <small> 你</small>}{p.isBot && <small> · {p.afkSince ? "AI代管中" : `${botLabels[p.botDifficulty ?? "normal"]}人机`}</small>}</b><SpiceRow values={p.spices} compact /></div>
         <div className="player-score"><b>{scorePlayer(p)}</b><small>分 · {p.orders.length} 单</small></div>
+        {hotspotRole === "host" && p.id !== hostSelfId && !p.isBot && state.status === "playing" && <button className="afk-kick" onClick={() => markPlayerAfk(p.id)}>代管</button>}
         {latestActions.has(p.id) && <LastActionBadge event={latestActions.get(p.id)!} />}
         {activeChat?.playerId === p.id && <div className="player-speech"><b>{activeChat.phrase}</b><span>🔊</span></div>}
       </div>)}

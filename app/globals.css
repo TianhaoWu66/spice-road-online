@@ -427,3 +427,37 @@ input, select { border: 1px solid #d7c6aa; background: #fffdf7; color: var(--ink
 .pass-screen p { color: rgba(255,248,232,.72); }
 .pass-screen p b { color: #fff8e8; }
 .pass-screen .primary { margin-top: 14px; }
+
+/* ===== 热点联机（WebRTC 无服务器） ===== */
+.hotspot-entries { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.hotspot-entries .ghost { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.3); color: #fff8e8; }
+.hotspot-entries small { display: block; font-weight: 400; font-size: 12px; opacity: .82; margin-top: 2px; }
+.hotspot-panel { max-width: 520px; margin: 0 auto; padding: 28px 22px; display: flex; flex-direction: column; gap: 14px; text-align: left; }
+.hotspot-panel h1 { margin: 0; font-size: 30px; }
+.hotspot-panel label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: rgba(255,248,232,.85); }
+.hotspot-panel textarea { min-height: 90px; resize: vertical; }
+.player-status { padding: 8px 12px; border-radius: 8px; background: rgba(214,154,54,.15); border: 1px solid rgba(214,154,54,.4); color: #ffe3a8; font-size: 14px; }
+.hotspot-host-panel { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; padding: 16px; border: 1px solid rgba(255,255,255,.18); border-radius: 14px; background: rgba(255,255,255,.05); }
+.hotspot-head { display: flex; flex-direction: column; gap: 2px; }
+.hotspot-head b { font-size: 16px; }
+.hotspot-head small { color: rgba(255,248,232,.65); }
+.pairing-card { display: flex; gap: 14px; align-items: flex-start; padding: 12px; border: 1px solid rgba(255,255,255,.14); border-radius: 12px; background: rgba(0,0,0,.18); }
+.pairing-qr { width: 110px; height: 110px; background: #fff; border-radius: 8px; padding: 4px; flex: none; }
+.pairing-qr img { width: 100%; height: 100%; object-fit: contain; }
+.pairing-actions { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.code-block { font-family: ui-monospace, Consolas, monospace; font-size: 11px; line-height: 1.45; word-break: break-all; max-height: 96px; overflow: auto; padding: 8px; background: rgba(0,0,0,.3); border-radius: 8px; color: #cfe3dc; user-select: all; }
+.pairing-buttons { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pairing-status { font-size: 12px; font-weight: 700; }
+.pairing-status.ok { color: #8fd0a8; }
+.pairing-status.bad { color: #e8a0a0; }
+.answer-row { display: flex; gap: 8px; align-items: center; }
+.answer-row input { flex: 1; min-width: 0; }
+.answer-box { display: flex; flex-direction: column; gap: 10px; align-items: center; text-align: center; }
+.answer-box .pairing-qr { width: 160px; height: 160px; }
+.host-players { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
+.host-players span { padding: 3px 10px; border-radius: 999px; background: rgba(113,56,47,.35); border: 1px solid rgba(255,255,255,.2); }
+.hint { font-size: 12px; color: rgba(255,248,232,.6); }
+
+/* 房主代管按钮 */
+.afk-kick { padding: 3px 10px; font-size: 12px; border-radius: 999px; border: 1px solid rgba(255,255,255,.3); background: rgba(113,56,47,.4); color: #fff8e8; cursor: pointer; white-space: nowrap; }
+.afk-kick:hover { background: rgba(113,56,47,.65); }
