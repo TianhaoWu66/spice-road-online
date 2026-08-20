@@ -14,6 +14,7 @@ export type ActionEvent = {
   playerId: string;
   playerName: string;
   playerColor: string;
+  playerAvatar?: string;
   type: "PLAY" | "ACQUIRE" | "CLAIM" | "REST";
   cardId?: string;
   orderId?: string;
@@ -36,6 +37,8 @@ export type Player = {
   token?: string;
   name: string;
   color: string;
+  avatar?: string;
+  accountId?: string;
   spices: Spices;
   hand: string[];
   played: string[];
@@ -179,9 +182,9 @@ const shuffle = <T,>(values: T[]) => {
   return copy;
 };
 
-export function createLobby(hostName: string, maxPlayers: number, token: string): GameState {
+export function createLobby(hostName: string, maxPlayers: number, token: string, profile?: { accountId?: string; avatar?: string }): GameState {
   const host: Player = {
-    id: crypto.randomUUID(), token, name: hostName, color: PLAYER_COLORS[0],
+    id: crypto.randomUUID(), token, name: hostName, color: PLAYER_COLORS[0], avatar: profile?.avatar, accountId: profile?.accountId,
     spices: zeroSpices(), hand: [], played: [], orders: [], gold: 0, silver: 0,
   };
   return {
@@ -193,12 +196,12 @@ export function createLobby(hostName: string, maxPlayers: number, token: string)
   };
 }
 
-export function addPlayer(state: GameState, name: string, token: string): GameState {
+export function addPlayer(state: GameState, name: string, token: string, profile?: { accountId?: string; avatar?: string }): GameState {
   if (state.status !== "lobby") throw new Error("游戏已经开始");
   if (state.players.length >= state.maxPlayers) throw new Error("房间已满");
   if (state.players.some((p) => p.name === name)) throw new Error("这个昵称已被使用");
   state.players.push({
-    id: crypto.randomUUID(), token, name, color: PLAYER_COLORS[state.players.length],
+    id: crypto.randomUUID(), token, name, color: PLAYER_COLORS[state.players.length], avatar: profile?.avatar, accountId: profile?.accountId,
     spices: zeroSpices(), hand: [], played: [], orders: [], gold: 0, silver: 0,
   });
   state.log.push(`${name} 加入了商队`);
@@ -222,6 +225,7 @@ export function addBot(state: GameState, difficulty: BotDifficulty): GameState {
   while (usedNames.has(name)) name = `${baseName}${suffix++}`;
   state.players.push({
     id: crypto.randomUUID(), name, color: PLAYER_COLORS[state.players.length],
+    avatar: "🤖",
     spices: zeroSpices(), hand: [], played: [], orders: [], gold: 0, silver: 0,
     isBot: true, botDifficulty: difficulty,
   });
@@ -319,10 +323,10 @@ function finishTurn(state: GameState) {
   if (wasLast) state.round += 1;
 }
 
-function recordAction(state: GameState, player: Player, event: Omit<ActionEvent, "id" | "playerId" | "playerName" | "playerColor">) {
+function recordAction(state: GameState, player: Player, event: Omit<ActionEvent, "id" | "playerId" | "playerName" | "playerColor" | "playerAvatar">) {
   const events = state.actionEvents ?? [];
   const id = state.nextActionEventId ?? ((events.at(-1)?.id ?? 0) + 1);
-  events.push({ id, playerId: player.id, playerName: player.name, playerColor: player.color, ...event });
+  events.push({ id, playerId: player.id, playerName: player.name, playerColor: player.color, playerAvatar: player.avatar, ...event });
   state.actionEvents = events.slice(-20);
   state.nextActionEventId = id + 1;
 }

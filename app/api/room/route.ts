@@ -3,6 +3,7 @@ import {
   addBot, addPlayer, applyGameAction, BotDifficulty, createLobby, GameAction, GameState,
   ChatPhrase, removeBot, runBotTurns, sendChat, startGame,
 } from "../../../lib/game";
+import { getAccountFromRequest } from "../../../lib/accounts";
 
 const schemaSql = `CREATE TABLE IF NOT EXISTS rooms (
   code TEXT PRIMARY KEY NOT NULL,
@@ -24,6 +25,7 @@ function publicState(state: GameState) {
   return { ...state, players: state.players.map((player) => {
     const publicPlayer = { ...player };
     delete publicPlayer.token;
+    delete publicPlayer.accountId;
     return publicPlayer;
   }) };
 }
@@ -65,7 +67,8 @@ export async function POST(request: Request) {
       code?: string; name?: string; token?: string; maxPlayers?: number;
       action?: GameAction; difficulty?: BotDifficulty; botId?: string; phrase?: ChatPhrase;
     };
-    const name = String(body.name ?? "").trim().slice(0, 12);
+    const account = await getAccountFromRequest(request);
+    const name = account?.nickname ?? String(body.name ?? "").trim().slice(0, 12);
     const token = String(body.token ?? "");
 
     if (body.command === "create") {
@@ -73,10 +76,10 @@ export async function POST(request: Request) {
       const maxPlayers = Math.min(5, Math.max(2, Number(body.maxPlayers) || 5));
       for (let attempt = 0; attempt < 5; attempt++) {
         const code = randomCode();
-        const state = createLobby(name, maxPlayers, token || crypto.randomUUID());
+        const state = createLobby(name, maxPlayers, token || crypto.randomUUID(), account ? { accountId: account.id, avatar: account.avatar } : undefined);
         const result = await env.DB.prepare("INSERT OR IGNORE INTO rooms (code, state, version, updated_at) VALUES (?, ?, 1, ?)")
           .bind(code, JSON.stringify(state), Date.now()).run();
-        if (result.meta.changes) return Response.json({ code, version: 1, token: state.players[0].token, state: publicState(state) });
+        if (result.meta.changes) return Response.json({ code, version: 1, token: state.players[0].token, playerId: state.players[0].id, state: publicState(state) });
       }
       throw new Error("暂时无法创建房间，请重试");
     }
@@ -86,14 +89,17 @@ export async function POST(request: Request) {
     if (body.command === "join") {
       if (!name) throw new Error("请输入昵称");
       const joinToken = token || crypto.randomUUID();
-      const existing = room.state.players.find((p) => p.token === joinToken);
-      if (!existing) addPlayer(room.state, name, joinToken);
-      const version = existing ? room.version : await saveRoom(code, room.state, room.version);
-      return Response.json({ code, version, token: joinToken, state: publicState(room.state) });
+      const existing = room.state.players.find((p) => account ? p.accountId === account.id : p.token === joinToken);
+      if (!existing) addPlayer(room.state, name, joinToken, account ? { accountId: account.id, avatar: account.avatar } : undefined);
+      else if (account) { existing.name = account.nickname; existing.avatar = account.avatar; }
+      const joinedPlayer = existing ?? room.state.players.at(-1)!;
+      const version = existing && !account ? room.version : await saveRoom(code, room.state, room.version);
+      return Response.json({ code, version, token: joinedPlayer.token ?? joinToken, playerId: joinedPlayer.id, state: publicState(room.state) });
     }
 
-    const player = room.state.players.find((p) => p.token === token);
+    const player = room.state.players.find((p) => account ? p.accountId === account.id : p.token === token);
     if (!player) throw new Error("玩家身份已失效，请重新加入");
+    if (account) { player.name = account.nickname; player.avatar = account.avatar; }
     if (body.command === "addBot") {
       if (player.id !== room.state.hostId) throw new Error("只有房主可以添加人机");
       addBot(room.state, body.difficulty ?? "normal");

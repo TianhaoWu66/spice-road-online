@@ -50,6 +50,23 @@ button:disabled { cursor: not-allowed; }
 .entry-card { position: absolute; z-index: 2; width: min(390px, calc(100vw - 40px)); right: clamp(30px, 8vw, 140px); top: 50%; transform: translateY(-50%); background: #fffaf0; color: var(--ink); padding: 34px; border-radius: 6px; box-shadow: 0 35px 90px rgba(0,0,0,.33); }
 .entry-card h2 { margin-top: 0; }
 .entry-card label { display: flex; flex-direction: column; gap: 8px; font: 700 12px system-ui, sans-serif; color: var(--muted); letter-spacing: .04em; }
+.auth-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin: -8px 0 20px; padding: 4px; border-radius: 6px; background: #eee2cf; }
+.entry-card .auth-tabs button { min-height: 38px; padding: 0 8px; border: 0; border-radius: 4px; background: transparent; color: #77695c; font-size: 12px; }
+.entry-card .auth-tabs button.active { background: #fffdf7; color: var(--wine); box-shadow: 0 2px 8px rgba(65,43,29,.12); }
+.auth-loading { padding: 18px 0; color: var(--muted); text-align: center; font: 12px system-ui, sans-serif; }
+.auth-form { display: grid; gap: 13px; }
+.auth-form .wide { margin-top: 2px; }
+.account-card { display: grid; grid-template-columns: 58px 1fr auto; align-items: center; gap: 12px; padding: 12px; border: 1px solid #dfcdb1; border-radius: 7px; background: #f7ecda; }
+.account-card > div:not(.avatar-picker) b, .account-card > div:not(.avatar-picker) span { display: block; }
+.account-card > div:not(.avatar-picker) b { font-size: 15px; }
+.account-card > div:not(.avatar-picker) span { margin-top: 3px; color: var(--muted); font: 11px system-ui, sans-serif; }
+.entry-card .profile-avatar { width: 54px; min-height: 54px; display: grid; place-items: center; align-content: center; gap: 1px; padding: 0; border: 1px solid #d1b98f; border-radius: 50%; background: #fffaf0; color: var(--ink); font-size: 25px; }
+.profile-avatar small { color: var(--muted); font: 8px system-ui, sans-serif; }
+.entry-card .account-logout { min-height: 34px; padding: 0 9px; border: 1px solid #d3bda0; background: transparent; color: var(--wine); font-size: 10px; }
+.avatar-picker { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(8, 1fr); gap: 5px; padding-top: 10px; border-top: 1px solid #e2d3bb; }
+.entry-card .avatar-picker button { min-width: 0; min-height: 38px; padding: 0; border: 1px solid transparent; border-radius: 5px; background: #fffaf0; color: var(--ink); font-size: 20px; }
+.entry-card .avatar-picker button[aria-pressed="true"] { border-color: var(--gold); background: #f4dfb5; }
+.game-entry-fields { margin-top: 18px; }
 input, select { border: 1px solid #d7c6aa; background: #fffdf7; color: var(--ink); border-radius: 4px; min-height: 48px; padding: 0 14px; font-size: 16px; }
 .create-row, .join-row { display: grid; grid-template-columns: 110px 1fr; gap: 10px; margin-top: 18px; align-items: end; }
 .join-row { grid-template-columns: 1fr 82px; }
@@ -298,6 +315,7 @@ input, select { border: 1px solid #d7c6aa; background: #fffdf7; color: var(--ink
   .landing-copy > p:not(.eyebrow) { font-size: 16px; }
   .rule-pills { justify-content: center; margin-bottom: 30px; }
   .entry-card { padding: 26px; }
+  .avatar-picker { grid-template-columns: repeat(4, 1fr); }
   .topbar { padding-inline: 16px; }
   .topbar .theme-switcher button { width: 26px; padding: 0; justify-content: center; font-size: 0; }
   .topbar .theme-switcher button i { margin: 0; }

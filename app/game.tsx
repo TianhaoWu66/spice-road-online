@@ -5,8 +5,11 @@ import {
   ActionEvent, BotDifficulty, canAfford, CARD_CATALOG_READY, CHAT_PHRASES, ChatEvent, ChatPhrase, describeMerchant, GameAction, GameState, MerchantCard, MERCHANT_CARDS,
   ORDER_CARDS, scorePlayer, Spice, Spices, SPICE_NAMES, zeroSpices,
 } from "../lib/game";
+import { PROFILE_AVATARS, ProfileAvatar } from "../lib/profile";
 
-type RoomResponse = { code: string; version: number; token?: string; state: GameState; error?: string };
+type RoomResponse = { code: string; version: number; token?: string; playerId?: string; state: GameState; error?: string };
+type AccountProfile = { id: string; username: string; nickname: string; avatar: ProfileAvatar };
+type AuthMode = "guest" | "login" | "register";
 type VisualTheme = "parchment" | "night" | "celadon";
 type Modal =
   | { kind: "trade"; cardId: string; times: number }
@@ -64,7 +67,7 @@ function ActionReveal({ event }: { event: ActionEvent }) {
   const detail = event.times && event.times > 1 ? `连续交易 ${event.times} 次` : upgradePath || (event.upgradeCount ? `升级 ${event.upgradeCount} 次` : "");
   return <div className="action-reveal" role="status" aria-live="polite">
     <section className={`action-stage action-${event.type.toLowerCase()}`}>
-      <div className="action-player"><span className="avatar" style={{ background: event.playerColor }}>{event.playerName.slice(0, 1)}</span><div><b>{event.playerName}</b><small>{label}</small></div></div>
+      <div className="action-player"><span className="avatar" style={{ background: event.playerColor }}>{event.playerAvatar ?? event.playerName.slice(0, 1)}</span><div><b>{event.playerName}</b><small>{label}</small></div></div>
       {card && <div className={`merchant-card card-${card.type} reveal-card-face`}><MerchantFace card={card} /></div>}
       {event.orderId && <div className="order-card reveal-order"><OrderFace orderId={event.orderId} /></div>}
       {event.type === "REST" && <div className="rest-reveal"><span>☾</span><b>收回全部商人牌</b></div>}
@@ -128,6 +131,15 @@ export default function Game() {
   const [chatQueue, setChatQueue] = useState<ChatEvent[]>([]);
   const [activeChat, setActiveChat] = useState<ChatEvent | null>(null);
   const [showRules, setShowRules] = useState(false);
+  const [account, setAccount] = useState<AccountProfile | null>(null);
+  const [authMode, setAuthMode] = useState<AuthMode>("guest");
+  const [authReady, setAuthReady] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [registerNickname, setRegisterNickname] = useState("");
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const observedEventId = useRef<number | null>(null);
   const observedRoomCode = useRef<string | null>(null);
   const observedChatId = useRef<number | null>(null);
@@ -139,6 +151,30 @@ export default function Game() {
   const pendingDiscard = room?.state.pendingDiscard;
   const mustDiscard = pendingDiscard?.playerId === me?.id;
   const isMyTurn = room?.state.status === "playing" && room.state.currentPlayer === myIndex && !mustDiscard && !activeEvent && actionQueue.length === 0;
+
+  useEffect(() => {
+    fetch("/api/auth", { cache: "no-store" }).then(async (response) => {
+      const data = await response.json() as { user?: AccountProfile | null };
+      if (data.user) { setAccount(data.user); setName(data.user.nickname); }
+    }).finally(() => setAuthReady(true));
+  }, []);
+
+  const accountRequest = async (action: "register" | "login" | "logout" | "avatar", avatar?: ProfileAvatar) => {
+    setAuthBusy(true); setAuthError("");
+    try {
+      const response = await fetch("/api/auth", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, username, password, nickname: registerNickname, avatar }),
+      });
+      const data = await response.json() as { user?: AccountProfile | null; error?: string };
+      if (!response.ok) throw new Error(data.error || "账号操作失败");
+      setAccount(data.user ?? null);
+      if (data.user) { setName(data.user.nickname); setPassword(""); setShowAvatarPicker(false); }
+      else { setName(""); setAuthMode("guest"); }
+    } catch (authRequestError) {
+      setAuthError(authRequestError instanceof Error ? authRequestError.message : "账号操作失败");
+    } finally { setAuthBusy(false); }
+  };
 
   const request = useCallback(async (body: Record<string, unknown>) => {
     setBusy(true); setError("");
@@ -152,7 +188,7 @@ export default function Game() {
       setRoom(data);
       if (data.token) {
         localStorage.setItem(`silk-token-${data.code}`, data.token);
-        const player = data.state.players.find((p) => p.name === name.trim());
+        const player = data.playerId ? data.state.players.find((candidate) => candidate.id === data.playerId) : data.state.players.find((candidate) => candidate.name === name.trim());
         if (player) localStorage.setItem(`silk-player-${data.code}`, player.id);
       }
       window.history.replaceState({}, "", `#${data.code}`);
@@ -312,19 +348,43 @@ export default function Game() {
       </section>
       <section className="entry-card">
         {!CARD_CATALOG_READY && <div className="catalog-notice"><b>卡牌库整理中</b><span>旧卡已全部移除，等待录入新卡。</span></div>}
-        <label>你的昵称<input value={name} maxLength={12} onChange={(e) => setName(e.target.value)} placeholder="商队领队" /></label>
-        <div className="create-row">
-          <label>人数<select value={maxPlayers} onChange={(e) => setMaxPlayers(Number(e.target.value))}>
-            {[2, 3, 4, 5].map((n) => <option value={n} key={n}>{n} 人</option>)}
-          </select></label>
-          <button className="primary" disabled={busy || !name.trim()} onClick={() => request({ command: "create", name, maxPlayers })}>创建房间</button>
-        </div>
-        <div className="divider"><span>或加入朋友</span></div>
-        <div className="join-row">
-          <input aria-label="房间码" value={joinCode} maxLength={6} onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} placeholder="六位房间码" />
-          <button disabled={busy || !name.trim() || joinCode.length !== 6} onClick={() => request({ command: "join", name, code: joinCode })}>加入</button>
-        </div>
+        {!account && <div className="auth-tabs" role="tablist" aria-label="登录方式">
+          {(["guest", "login", "register"] as AuthMode[]).map((mode) => <button role="tab" aria-selected={authMode === mode} className={authMode === mode ? "active" : ""} key={mode} onClick={() => { setAuthMode(mode); setAuthError(""); }}>{mode === "guest" ? "游客" : mode === "login" ? "账号登录" : "注册"}</button>)}
+        </div>}
+        {!authReady && <div className="auth-loading">正在读取登录状态…</div>}
+        {authReady && account && <div className="account-card">
+          <button className="profile-avatar" aria-label="更换头像" onClick={() => setShowAvatarPicker((visible) => !visible)}>{account.avatar}<small>更换</small></button>
+          <div><b>{account.nickname}</b><span>@{account.username}</span></div>
+          <button className="account-logout" disabled={authBusy} onClick={() => accountRequest("logout")}>退出</button>
+          {showAvatarPicker && <div className="avatar-picker" aria-label="选择头像">{PROFILE_AVATARS.map((avatar) => <button aria-pressed={account.avatar === avatar} key={avatar} disabled={authBusy} onClick={() => accountRequest("avatar", avatar)}>{avatar}</button>)}</div>}
+        </div>}
+        {authReady && !account && authMode === "login" && <div className="auth-form">
+          <label>账号<input value={username} maxLength={24} autoComplete="username" onChange={(event) => setUsername(event.target.value)} placeholder="字母、数字或下划线" /></label>
+          <label>密码<input type="password" value={password} maxLength={72} autoComplete="current-password" onChange={(event) => setPassword(event.target.value)} placeholder="至少 6 位" /></label>
+          <button className="primary wide" disabled={authBusy || !username.trim() || !password} onClick={() => accountRequest("login")}>登录账号</button>
+        </div>}
+        {authReady && !account && authMode === "register" && <div className="auth-form">
+          <label>账号<input value={username} maxLength={24} autoComplete="username" onChange={(event) => setUsername(event.target.value)} placeholder="3–24 位字母、数字或下划线" /></label>
+          <label>密码<input type="password" value={password} maxLength={72} autoComplete="new-password" onChange={(event) => setPassword(event.target.value)} placeholder="至少 6 位" /></label>
+          <label>昵称<input value={registerNickname} maxLength={12} onChange={(event) => setRegisterNickname(event.target.value)} placeholder="游戏中显示的名字" /></label>
+          <button className="primary wide" disabled={authBusy || !username.trim() || password.length < 6 || !registerNickname.trim()} onClick={() => accountRequest("register")}>注册并登录</button>
+        </div>}
+        {authReady && (account || authMode === "guest") && <div className="game-entry-fields">
+          {!account && <label>游客昵称<input value={name} maxLength={12} onChange={(e) => setName(e.target.value)} placeholder="商队领队" /></label>}
+          <div className="create-row">
+            <label>人数<select value={maxPlayers} onChange={(e) => setMaxPlayers(Number(e.target.value))}>
+              {[2, 3, 4, 5].map((n) => <option value={n} key={n}>{n} 人</option>)}
+            </select></label>
+            <button className="primary" disabled={busy || !name.trim()} onClick={() => request({ command: "create", name, maxPlayers })}>创建房间</button>
+          </div>
+          <div className="divider"><span>或加入朋友</span></div>
+          <div className="join-row">
+            <input aria-label="房间码" value={joinCode} maxLength={6} onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} placeholder="六位房间码" />
+            <button disabled={busy || !name.trim() || joinCode.length !== 6} onClick={() => request({ command: "join", name, code: joinCode })}>加入</button>
+          </div>
+        </div>}
         {room && !me && room.state.status === "lobby" && <button className="text-button" onClick={reconnectKnownPlayer}>返回已有席位</button>}
+        {authError && <div className="error-box">{authError}</div>}
         {error && <div className="error-box">{error}</div>}
         <button className="rules-link" onClick={() => setShowRules(true)}><span>◎</span> 查看规则说明书</button>
       </section>
@@ -351,7 +411,7 @@ export default function Game() {
           {Array.from({ length: room.state.maxPlayers }).map((_, i) => {
             const player = room.state.players[i];
             return <div className={`seat ${player ? "filled" : ""}`} key={i}>
-              <span className="avatar" style={{ background: player?.color }}>{player ? player.name.slice(0, 1) : i + 1}</span>
+              <span className="avatar" style={{ background: player?.color }}>{player ? player.avatar ?? player.name.slice(0, 1) : i + 1}</span>
               <div><b>{player?.name ?? "等待加入"}</b><small>{player?.id === room.state.hostId ? "房主" : player?.isBot ? `${botLabels[player.botDifficulty ?? "normal"]}人机` : player ? "已就绪" : "空席位"}</small></div>
               {isHost && player?.isBot && <button className="remove-bot" disabled={busy} onClick={() => request({ command: "removeBot", code: room.code, token, botId: player.id })}>移除</button>}
             </div>;
@@ -390,7 +450,7 @@ export default function Game() {
 
     <aside className="players-panel">
       {state.players.map((p, index) => <div className={`player-strip ${index === state.currentPlayer && state.status === "playing" ? "active" : ""} ${p.id === me.id ? "me" : ""}`} key={p.id}>
-        <span className="avatar" style={{ background: p.color }}>{p.name.slice(0, 1)}</span>
+        <span className="avatar" style={{ background: p.color }}>{p.avatar ?? p.name.slice(0, 1)}</span>
         <div className="player-meta"><b>{p.name}{p.id === me.id && <small> 你</small>}{p.isBot && <small> · {botLabels[p.botDifficulty ?? "normal"]}人机</small>}</b><SpiceRow values={p.spices} compact /></div>
         <div className="player-score"><b>{scorePlayer(p)}</b><small>分 · {p.orders.length} 单</small></div>
         {latestActions.has(p.id) && <LastActionBadge event={latestActions.get(p.id)!} />}
@@ -432,7 +492,7 @@ export default function Game() {
     {activeEvent && <ActionReveal key={activeEvent.id} event={activeEvent} />}
     {modal && <ActionModal modal={modal} setModal={setModal} meSpices={me.spices} onConfirm={sendAction} busy={busy} />}
     {state.status === "finished" && <div className="result-backdrop"><section className="result-card"><p className="eyebrow">商路结算</p><h1>{state.winnerIds.includes(me.id) ? "你赢得了商路盛誉" : `${ranking[0].name} 赢得了胜利`}</h1>
-      <div className="ranking">{ranking.map((p, i) => <div className={state.winnerIds.includes(p.id) ? "winner" : ""} key={p.id}><span>{i + 1}</span><i className="avatar" style={{ background: p.color }}>{p.name.slice(0, 1)}</i><b>{p.name}</b><small>{p.orders.length} 张订单</small><strong>{scorePlayer(p)} 分</strong></div>)}</div>
+      <div className="ranking">{ranking.map((p, i) => <div className={state.winnerIds.includes(p.id) ? "winner" : ""} key={p.id}><span>{i + 1}</span><i className="avatar" style={{ background: p.color }}>{p.avatar ?? p.name.slice(0, 1)}</i><b>{p.name}</b><small>{p.orders.length} 张订单</small><strong>{scorePlayer(p)} 分</strong></div>)}</div>
       <button className="primary" onClick={() => { window.location.hash = ""; setRoom(null); }}>返回首页</button>
     </section></div>}
   </main>;
