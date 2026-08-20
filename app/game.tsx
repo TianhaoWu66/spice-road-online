@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActionEvent, BotDifficulty, canAfford, CHAT_PHRASES, ChatEvent, ChatPhrase, describeMerchant, GameAction, GameState, MerchantCard, MERCHANT_CARDS,
+  ActionEvent, BotDifficulty, canAfford, CARD_CATALOG_READY, CHAT_PHRASES, ChatEvent, ChatPhrase, describeMerchant, GameAction, GameState, MerchantCard, MERCHANT_CARDS,
   ORDER_CARDS, scorePlayer, Spice, Spices, SPICE_NAMES, zeroSpices,
 } from "../lib/game";
 
@@ -260,6 +260,7 @@ export default function Game() {
         <div className="rule-pills"><span>2–5 人</span><span>约 20 分钟</span><span>浏览器联机</span></div>
       </section>
       <section className="entry-card">
+        {!CARD_CATALOG_READY && <div className="catalog-notice"><b>卡牌库整理中</b><span>旧卡已全部移除，等待录入新卡。</span></div>}
         <label>你的昵称<input value={name} maxLength={12} onChange={(e) => setName(e.target.value)} placeholder="商队领队" /></label>
         <div className="create-row">
           <label>人数<select value={maxPlayers} onChange={(e) => setMaxPlayers(Number(e.target.value))}>
@@ -307,10 +308,17 @@ export default function Game() {
           <div><b>添加人机对手</b><small>可与真人混合对战</small></div>
           {(["easy", "normal", "hard"] as BotDifficulty[]).map((difficulty) => <button key={difficulty} disabled={busy || room.state.players.length >= room.state.maxPlayers} onClick={() => request({ command: "addBot", code: room.code, token, difficulty })}>{botLabels[difficulty]}</button>)}
         </div>}
-        {isHost ? <button className="primary start-button" disabled={busy || room.state.players.length < 2} onClick={() => request({ command: "start", code: room.code, token })}>开始游戏</button>
+        {!CARD_CATALOG_READY && <div className="catalog-lobby-note">卡牌已清空，等待新卡录入后开放游戏。</div>}
+        {isHost ? <button className="primary start-button" disabled={busy || room.state.players.length < 2 || !CARD_CATALOG_READY} onClick={() => request({ command: "start", code: room.code, token })}>{CARD_CATALOG_READY ? "开始游戏" : "等待卡牌录入"}</button>
           : <div className="waiting-pulse"><i />等待房主开始游戏</div>}
         {error && <div className="error-box">{error}</div>}
       </section>
+    </main>;
+  }
+
+  if (!CARD_CATALOG_READY) {
+    return <main className={`catalog-shell theme-${visualTheme}`}>
+      <section className="catalog-empty-state"><div className="empty-card-stack"><i /><i /><i /></div><p className="eyebrow">卡牌库整理中</p><h1>所有旧卡已移除</h1><p>当前对局已暂停。等待新卡片按顺序录入后，即可重新开始游戏。</p><button className="primary" onClick={() => { window.location.hash = ""; setRoom(null); }}>返回首页</button></section>
     </main>;
   }
 

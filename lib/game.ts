@@ -79,46 +79,9 @@ export const PLAYER_COLORS = ["#e6a23c", "#df6b57", "#5f9b76", "#5f7dad", "#8b6b
 export const zeroSpices = (): Spices => [0, 0, 0, 0];
 const s = (a = 0, b = 0, c = 0, d = 0): Spices => [a, b, c, d];
 
-export const MERCHANT_CARDS: Record<string, MerchantCard> = Object.fromEntries(
-  ([
-    { id: "start-gain", type: "produce", gain: s(2) },
-    { id: "start-up", type: "upgrade", amount: 2 },
-    { id: "m01", type: "produce", gain: s(3) },
-    { id: "m02", type: "produce", gain: s(2, 1) },
-    { id: "m03", type: "produce", gain: s(0, 2) },
-    { id: "m04", type: "produce", gain: s(1, 0, 1) },
-    { id: "m05", type: "produce", gain: s(0, 0, 1) },
-    { id: "m06", type: "upgrade", amount: 2 },
-    { id: "m07", type: "upgrade", amount: 3 },
-    { id: "m08", type: "trade", cost: s(2), gain: s(0, 2) },
-    { id: "m09", type: "trade", cost: s(3), gain: s(0, 0, 1) },
-    { id: "m10", type: "trade", cost: s(0, 2), gain: s(0, 0, 0, 1) },
-    { id: "m11", type: "trade", cost: s(1, 1), gain: s(0, 0, 2) },
-    { id: "m12", type: "trade", cost: s(0, 0, 2), gain: s(0, 0, 0, 3) },
-    { id: "m13", type: "trade", cost: s(0, 0, 0, 1), gain: s(0, 3) },
-    { id: "m14", type: "trade", cost: s(0, 0, 1), gain: s(2, 2) },
-    { id: "m15", type: "trade", cost: s(0, 1), gain: s(2, 0, 1) },
-    { id: "m16", type: "trade", cost: s(4), gain: s(0, 0, 2) },
-    { id: "m17", type: "trade", cost: s(2, 0, 1), gain: s(0, 0, 0, 2) },
-    { id: "m18", type: "trade", cost: s(1, 0, 0, 1), gain: s(0, 0, 2) },
-    { id: "m19", type: "trade", cost: s(0, 3), gain: s(0, 0, 0, 2) },
-    { id: "m20", type: "trade", cost: s(2, 2), gain: s(0, 0, 0, 2) },
-  ] as MerchantCard[]).map((card) => [card.id, card]),
-);
-
-export const ORDER_CARDS: Record<string, OrderCard> = Object.fromEntries(
-  [
-    ["o01", s(2, 2, 2), 9], ["o02", s(0, 2, 2, 1), 12],
-    ["o03", s(0, 0, 3, 2), 16], ["o04", s(0, 0, 0, 5), 20],
-    ["o05", s(3, 2, 1, 1), 11], ["o06", s(2, 0, 2, 2), 14],
-    ["o07", s(0, 4, 0, 2), 13], ["o08", s(5, 0, 0, 2), 10],
-    ["o09", s(0, 3, 3), 13], ["o10", s(0, 0, 2, 3), 17],
-    ["o11", s(2, 3, 0, 1), 10], ["o12", s(1, 1, 1, 2), 12],
-    ["o13", s(0, 2, 0, 3), 16], ["o14", s(4, 0, 2), 8],
-    ["o15", s(2, 2, 0, 2), 13], ["o16", s(0, 5, 1), 11],
-    ["o17", s(3, 0, 0, 3), 15], ["o18", s(1, 0, 3, 1), 12],
-  ].map(([id, cost, points]) => [id, { id, cost, points }]),
-);
+export const CARD_CATALOG_READY = false;
+export const MERCHANT_CARDS: Record<string, MerchantCard> = {};
+export const ORDER_CARDS: Record<string, OrderCard> = {};
 
 const shuffle = <T,>(values: T[]) => {
   const copy = [...values];
@@ -192,6 +155,7 @@ export function removeBot(state: GameState, botId: string): GameState {
 export function startGame(state: GameState): GameState {
   if (state.status !== "lobby") throw new Error("游戏已经开始");
   if (state.players.length < 2) throw new Error("至少需要两名玩家");
+  if (!CARD_CATALOG_READY || !Object.keys(MERCHANT_CARDS).length || !Object.keys(ORDER_CARDS).length) throw new Error("卡牌库正在整理，暂时不能开始游戏");
   const merchantDeck = shuffle(Object.keys(MERCHANT_CARDS).filter((id) => !id.startsWith("start")));
   const orderDeck = shuffle(Object.keys(ORDER_CARDS));
   state.players.forEach((p, index) => {
@@ -237,7 +201,7 @@ function autoDiscard(player: Player, state?: GameState) {
 }
 
 export function scorePlayer(player: Player) {
-  return player.orders.reduce((sum, id) => sum + ORDER_CARDS[id].points, 0)
+  return player.orders.reduce((sum, id) => sum + (ORDER_CARDS[id]?.points ?? 0), 0)
     + player.gold * 3 + player.silver + player.spices[1] + player.spices[2] + player.spices[3];
 }
 

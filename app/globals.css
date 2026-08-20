@@ -62,6 +62,9 @@ input, select { border: 1px solid #d7c6aa; background: #fffdf7; color: var(--ink
 .divider { display: flex; align-items: center; gap: 12px; margin: 25px 0 0; color: #a69987; font: 11px system-ui, sans-serif; }
 .divider::before, .divider::after { content: ""; height: 1px; background: #e4d8c6; flex: 1; }
 .error-box { margin-top: 14px; padding: 10px 12px; border-radius: 4px; color: #8f2e27; background: #fbe7df; font: 13px system-ui, sans-serif; }
+.catalog-notice { display: flex; flex-direction: column; gap: 4px; margin-bottom: 18px; padding: 12px 14px; border: 1px solid #dfc38d; border-radius: 5px; background: #fff2d6; color: #624626; }
+.catalog-notice b { font-size: 14px; }
+.catalog-notice span { color: #876b47; font: 11px system-ui, sans-serif; }
 .text-button { background: transparent !important; color: var(--teal) !important; width: 100%; margin-top: 10px; }
 .landing-shell footer { position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%); opacity: .45; font: 11px system-ui, sans-serif; white-space: nowrap; }
 
@@ -95,9 +98,20 @@ input, select { border: 1px solid #d7c6aa; background: #fffdf7; color: var(--ink
 .bot-controls button:hover:not(:disabled) { background: rgba(255,255,255,.16); }
 .bot-controls button:disabled, .remove-bot:disabled { opacity: .35; }
 .start-button { margin-top: 28px; min-width: 230px; }
+.catalog-lobby-note { margin: 18px auto -10px; color: #f0d7a9; font: 12px system-ui, sans-serif; }
 .waiting-pulse { margin: 30px auto; font: 13px system-ui, sans-serif; color: rgba(255,255,255,.64); }
 .waiting-pulse i { display: inline-block; width: 8px; height: 8px; background: #e2ad50; border-radius: 50%; margin-right: 9px; animation: pulse 1.3s infinite; }
 @keyframes pulse { 50% { box-shadow: 0 0 0 8px rgba(226,173,80,0); } 0%,100% { box-shadow: 0 0 0 0 rgba(226,173,80,.5); } }
+
+.catalog-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at 50% 35%, #54786f, #241817 68%); color: #fff8e8; }
+.catalog-empty-state { width: min(520px, 100%); padding: 46px; border: 1px solid rgba(255,255,255,.16); border-radius: 12px; background: rgba(24,16,14,.34); box-shadow: 0 30px 90px rgba(0,0,0,.3); text-align: center; }
+.catalog-empty-state h1 { margin: 0 0 14px; font-size: 42px; font-weight: 500; }
+.catalog-empty-state > p:not(.eyebrow) { margin: 0 auto 28px; max-width: 390px; color: rgba(255,248,232,.68); font: 14px/1.8 system-ui, sans-serif; }
+.empty-card-stack { position: relative; width: 110px; height: 110px; margin: 0 auto 28px; }
+.empty-card-stack i { position: absolute; inset: 8px 19px; display: block; border: 1px dashed rgba(242,203,134,.55); border-radius: 8px; background: rgba(255,255,255,.035); }
+.empty-card-stack i:nth-child(1) { transform: rotate(-12deg); }
+.empty-card-stack i:nth-child(2) { transform: rotate(10deg); }
+.empty-card-stack i:nth-child(3) { transform: none; }
 
 .game-shell { min-height: 100vh; display: grid; grid-template-columns: 220px minmax(620px, 1fr) 220px; grid-template-rows: 72px minmax(520px, 1fr) 235px; grid-template-areas: "header header header" "players board log" "players hand log"; background: #d9c4a2; background-image: radial-gradient(circle at 30% 20%, #f4ead8 0, transparent 40%), linear-gradient(135deg, rgba(76,54,35,.07) 25%, transparent 25% 75%, rgba(76,54,35,.07) 75%); background-size: auto, 40px 40px; }
 .theme-parchment { --merchant-a: #7a4931; --merchant-b: #4a291f; --merchant-border: #b98a62; --order-a: #fff8e8; --order-b: #dec399; --order-border: #af8754; --card-accent: #e2b362; }
