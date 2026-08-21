@@ -156,6 +156,8 @@ export default function Game() {
   const [localPass, setLocalPass] = useState(false);
   const [localAddName, setLocalAddName] = useState("");
   const [botThinking, setBotThinking] = useState(false);
+  const lastScores = useRef<Map<string, number>>(new Map());
+  const [scoreDeltas, setScoreDeltas] = useState<Map<string, number>>(new Map());
   const [hotspotRole, setHotspotRole] = useState<HotspotRole>("off");
   const [hostPairings, setHostPairings] = useState<HostPairing[]>([]);
   const [hostConnections, setHostConnections] = useState<Array<{ id: string; name: string }>>([]);
@@ -579,6 +581,24 @@ export default function Game() {
   }, [room?.code, refresh, localMode, hotspotRole]);
 
   useEffect(() => {
+    if (!room?.state) return;
+    const deltas = new Map<string, number>();
+    room.state.players.forEach((p) => {
+      const score = scorePlayer(p);
+      const last = lastScores.current.get(p.id);
+      if (last !== undefined && score !== last) deltas.set(p.id, score - last);
+      lastScores.current.set(p.id, score);
+    });
+    if (deltas.size) setScoreDeltas(deltas);
+  }, [room?.state]);
+
+  useEffect(() => {
+    if (!scoreDeltas.size) return;
+    const timer = window.setTimeout(() => setScoreDeltas(new Map()), 1800);
+    return () => window.clearTimeout(timer);
+  }, [scoreDeltas]);
+
+  useEffect(() => {
     if (!room?.code) return;
     const events = room.state.actionEvents ?? [];
     const latestId = events.at(-1)?.id ?? 0;
@@ -941,7 +961,7 @@ export default function Game() {
                 <SpiceRow values={p.spices} />
                 <div className="seat-sub"><span className="coin small gold">{p.gold}</span><span className="coin small silver">{p.silver}</span></div>
               </div>
-              <div className="player-score"><b>{scorePlayer(p)}</b><small>{p.orders.length} 单</small></div>
+              <div className="player-score"><b>{scorePlayer(p)}<small className="score-unit">分</small></b><small>{p.orders.length} 单</small>{scoreDeltas.has(p.id) && scoreDeltas.get(p.id)! > 0 && <em className="score-delta">+{scoreDeltas.get(p.id)}</em>}</div>
               {hotspotRole === "host" && p.id !== hostSelfId && !p.isBot && state.status === "playing" && <button className="afk-kick" onClick={() => markPlayerAfk(p.id)}>代管</button>}
             </div>
             {latestActions.has(p.id) && <LastActionBadge event={latestActions.get(p.id)!} />}
@@ -957,7 +977,7 @@ export default function Game() {
       {activeChat?.playerId === me.id && <div className="player-speech me-speech"><b>{activeChat.phrase}</b><span>🔊</span></div>}
       <div className="me-strip">
         <span className="avatar" style={{ background: me.color }}>{me.avatar ?? me.name.slice(0, 1)}</span>
-        <div className="player-meta"><b>{me.name}<small> 你</small></b><span className="me-score">{scorePlayer(me)} 分 · {me.orders.length} 单</span></div>
+        <div className="player-meta"><b>{me.name}<small> 你</small></b><span className="me-score">{scorePlayer(me)} 分 · {me.orders.length} 单{scoreDeltas.has(me.id) && scoreDeltas.get(me.id)! > 0 && <em className="score-delta"> +{scoreDeltas.get(me.id)}</em>}</span></div>
         <div className="quick-chat"><b>语音快捷聊</b><div className="quick-chat-row">{CHAT_PHRASES.map((phrase) => <button disabled={busy} key={phrase} onClick={() => request({ command: "chat", code: room.code, token, phrase: phrase as ChatPhrase })}><span>🔊</span>{phrase}</button>)}</div></div>
       </div>
       <section className="hand-panel">

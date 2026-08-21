@@ -513,3 +513,11 @@ input, select { border: 1px solid #d7c6aa; background: #fffdf7; color: var(--ink
 .bot-thinking .bot-avatar { font-size: 56px; }
 .bot-thinking h2 { margin: 0; font-size: 28px; }
 .bot-thinking p { color: rgba(255,248,232,.72); margin: 0; }
+
+/* 实时分数 */
+.player-seat .player-score b { font-size: 24px; line-height: 1; }
+.player-seat .player-score .score-unit { font-size: 10px; opacity: .7; display: inline; margin-left: 2px; }
+.score-delta { position: absolute; font-style: normal; color: #3f8f5f; font-weight: 800; font-size: 14px; animation: score-pop 1.6s ease both; }
+.player-seat .score-delta { top: -6px; right: 6px; }
+.me-strip .score-delta { position: static; }
+@keyframes score-pop { 0% { opacity: 0; transform: translateY(4px) scale(.8); } 18% { opacity: 1; transform: translateY(0) scale(1.12); } 70% { opacity: 1; } 100% { opacity: 0; transform: translateY(-8px); } }
