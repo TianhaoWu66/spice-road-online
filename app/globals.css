@@ -153,8 +153,8 @@ input, select { border: 1px solid #d7c6aa; background: #fffdf7; color: var(--ink
 .empty-card-stack i:nth-child(2) { transform: rotate(10deg); }
 .empty-card-stack i:nth-child(3) { transform: none; }
 
-.game-shell { min-height: 100vh; display: flex; flex-direction: column; background: #d9c4a2; background-image: radial-gradient(circle at 30% 20%, #f4ead8 0, transparent 40%), linear-gradient(135deg, rgba(76,54,35,.07) 25%, transparent 25% 75%, rgba(76,54,35,.07) 75%); background-size: auto, 40px 40px; }
-.table { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; padding: 8px; }
+.game-shell { height: 100vh; height: 100dvh; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: #d9c4a2; background-image: radial-gradient(circle at 30% 20%, #f4ead8 0, transparent 40%), linear-gradient(135deg, rgba(76,54,35,.07) 25%, transparent 25% 75%, rgba(76,54,35,.07) 75%); background-size: auto, 40px 40px; }
+.table { position: relative; flex: 1 1 0; min-height: 0; display: grid; place-items: center; padding: 8px; overflow: hidden; }
 .seats-layer { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
 .player-seat { position: absolute; pointer-events: auto; display: flex; flex-direction: column; gap: 4px; max-width: 310px; }
 .player-seat .player-meta .spice-row { justify-content: flex-start; flex-wrap: wrap; margin-top: 4px; }
@@ -175,7 +175,7 @@ input, select { border: 1px solid #d7c6aa; background: #fffdf7; color: var(--ink
 .player-seat.slot-right .player-speech { left: auto; right: calc(100% + 12px); top: 4px; }
 .player-seat.slot-right .player-speech::before { left: auto; right: -7px; top: 16px; border-right: 1px solid #d5b372; border-top: 1px solid #d5b372; border-left: none; border-bottom: none; }
 .table .game-log { position: absolute; right: 14px; bottom: 12px; width: 216px; max-height: 40%; overflow: auto; border-left: none; border-radius: 10px; background: rgba(61,43,31,.9); box-shadow: 0 8px 24px rgba(40,24,15,.25); padding: 12px 14px; z-index: 4; }
-.me-area { position: relative; background: rgba(245,235,216,.96); border-top: 1px solid #bda887; padding: 8px clamp(16px, 2.5vw, 38px) 0; }
+.me-area { position: relative; flex: 0 0 auto; background: rgba(245,235,216,.96); border-top: 1px solid #bda887; padding: 8px clamp(16px, 2.5vw, 38px) 0; }
 .me-speech { position: absolute; left: 50%; top: -16px; transform: translateX(-50%); z-index: 45; }
 .me-speech::before { left: 50%; top: auto; bottom: -7px; margin-left: -6px; border-left: 1px solid #d5b372; border-bottom: 1px solid #d5b372; border-top: none; border-right: none; transform: rotate(45deg); }
 .me-strip { display: flex; align-items: center; gap: 12px; padding: 6px 0 10px; }
@@ -238,7 +238,7 @@ input, select { border: 1px solid #d7c6aa; background: #fffdf7; color: var(--ink
 .quick-chat button:hover:not(:disabled) { background: rgba(255,255,255,.12); transform: translateX(2px); }
 .quick-chat button:disabled { opacity: .35; }
 @keyframes speech-pop { 0% { opacity: 0; transform: translate(-8px,8px) scale(.86); } 12%,82% { opacity: 1; transform: translate(0,0) scale(1); } 100% { opacity: 0; transform: translateY(-5px) scale(.97); } }
-.board { grid-area: board; padding: 18px clamp(16px, 2.5vw, 38px) 12px; overflow: auto; }
+.board { max-width: 100%; max-height: 100%; padding: 14px clamp(16px, 2.5vw, 38px) 12px; overflow: auto; }
 .market-heading { display: flex; justify-content: space-between; align-items: end; margin-bottom: 10px; }
 .market-heading span { font-size: 17px; font-weight: 700; }
 .market-heading small { margin-left: 12px; color: var(--muted); font: 11px system-ui, sans-serif; }
