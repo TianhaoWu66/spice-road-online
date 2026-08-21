@@ -521,3 +521,16 @@ input, select { border: 1px solid #d7c6aa; background: #fffdf7; color: var(--ink
 .player-seat .score-delta { top: -6px; right: 6px; }
 .me-strip .score-delta { position: static; }
 @keyframes score-pop { 0% { opacity: 0; transform: translateY(4px) scale(.8); } 18% { opacity: 1; transform: translateY(0) scale(1.12); } 70% { opacity: 1; } 100% { opacity: 0; transform: translateY(-8px); } }
+
+/* 页面内扫码 */
+.scanner-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; background: rgba(20,13,10,.84); }
+.scanner-box { position: relative; width: min(92vw, 430px); padding: 22px 20px 18px; border-radius: 16px; background: #fff8e8; color: var(--ink); text-align: center; box-shadow: 0 24px 70px rgba(0,0,0,.45); }
+.scanner-video { width: 100%; max-height: 56vh; object-fit: cover; border-radius: 10px; background: #000; }
+.scanner-box .close { position: absolute; top: 8px; right: 10px; }
+.scanner-box > p { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+.scanner-msg { padding: 22px 8px; }
+.scanner-msg p { margin: 6px 0; font-size: 14px; }
+.scanner-msg p:first-child { font-weight: 700; }
+.scan-btn { border: 1px solid rgba(113,56,47,.4); background: #fff9eb; color: var(--wine); border-radius: 999px; padding: 5px 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.scan-btn:hover { background: #f3e2c3; }
+.scan-label { display: flex; align-items: center; gap: 8px; }

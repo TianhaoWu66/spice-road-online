@@ -166,6 +166,7 @@ export default function Game() {
   const [playerAnswerCode, setPlayerAnswerCode] = useState("");
   const [playerQr, setPlayerQr] = useState("");
   const [playerStatus, setPlayerStatus] = useState("");
+  const [scannerTarget, setScannerTarget] = useState<string | null>(null);
   const [myPlayerId, setMyPlayerId] = useState("");
   const [playerState, setPlayerState] = useState<GameState | null>(null);
   const [playerVersion, setPlayerVersion] = useState(0);
@@ -743,7 +744,7 @@ export default function Game() {
         <h1>连接房主</h1>
         {playerStatus && <div className="player-status">{playerStatus}</div>}
         <label>我的昵称<input value={playerName} maxLength={12} onChange={(e) => setPlayerName(e.target.value)} placeholder="游戏中显示的名字" /></label>
-        <label>房主邀请码<textarea value={hostCodeInput} rows={4} onChange={(e) => setHostCodeInput(e.target.value)} placeholder="粘贴房主的邀请码（或用手机相机扫房主屏幕的二维码后复制）" /></label>
+        <label><span className="scan-label">房主邀请码<button type="button" className="scan-btn" onClick={() => setScannerTarget("invite")}>📷 扫码</button></span><textarea value={hostCodeInput} rows={4} onChange={(e) => setHostCodeInput(e.target.value)} placeholder="粘贴房主的邀请码，或点「扫码」直接扫房主屏幕上的二维码" /></label>
         {!playerAnswerCode && <button className="primary wide" disabled={busy || !playerName.trim() || !hostCodeInput.trim()} onClick={connectToHost}>连接</button>}
         {playerAnswerCode && <div className="answer-box">
           <p>请把下面的 <strong>应答码</strong> 告诉房主并让他输入（或让房主扫你的二维码）</p>
@@ -755,6 +756,7 @@ export default function Game() {
         {error && <div className="error-box">{error}</div>}
         <button className="text-button" onClick={exitGame}>返回</button>
       </section>
+      {scannerTarget === "invite" && <QrScannerOverlay onResult={(text) => { setHostCodeInput(text); setScannerTarget(null); }} onClose={() => setScannerTarget(null)} />}
     </main>;
   }
 
@@ -859,6 +861,7 @@ export default function Game() {
               </div>
               {pairing.status === "waiting" && <div className="answer-row">
                 <input value={pairing.answerInput} onChange={(e) => setHostPairings((list) => list.map((p) => p.id === pairing.id ? { ...p, answerInput: e.target.value } : p))} placeholder="粘贴玩家的应答码" />
+                <button type="button" className="scan-btn" onClick={() => setScannerTarget(pairing.id)}>📷 扫应答码</button>
                 <button disabled={busy || !pairing.answerInput.trim()} onClick={() => acceptPairingAnswer(pairing.id, pairing.answerInput)}>确认连接</button>
               </div>}
             </div>
@@ -878,6 +881,11 @@ export default function Game() {
           : <div className="waiting-pulse"><i />等待房主开始游戏</div>}
         {error && <div className="error-box">{error}</div>}
       </section>
+      {scannerTarget && scannerTarget !== "invite" && <QrScannerOverlay onResult={(text) => {
+        setHostPairings((list) => list.map((p) => p.id === scannerTarget ? { ...p, answerInput: text } : p));
+        acceptPairingAnswer(scannerTarget, text);
+        setScannerTarget(null);
+      }} onClose={() => setScannerTarget(null)} />}
     </main>;
   }
 
@@ -998,6 +1006,65 @@ export default function Game() {
       <button className="primary" onClick={exitGame}>返回首页</button>
     </section></div>}
   </main>;
+}
+
+function QrScannerOverlay({ onResult, onClose }: { onResult: (text: string) => void; onClose: () => void }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const onResultRef = useRef(onResult);
+  onResultRef.current = onResult;
+  const [state, setState] = useState<"scanning" | "unsupported" | "denied">("scanning");
+
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+    let raf = 0;
+    let stopped = false;
+    const BarcodeDetectorCtor = (window as unknown as { BarcodeDetector?: new (options: { formats: string[] }) => { detect(v: HTMLVideoElement): Promise<Array<{ rawValue: string }>> } }).BarcodeDetector;
+    if (!BarcodeDetectorCtor) { setState("unsupported"); return; }
+    let detector: { detect(v: HTMLVideoElement): Promise<Array<{ rawValue: string }>> } | null = null;
+    try { detector = new BarcodeDetectorCtor({ formats: ["qr_code"] }); } catch { setState("unsupported"); return; }
+    const cleanup = () => {
+      stopped = true;
+      cancelAnimationFrame(raf);
+      if (stream) stream.getTracks().forEach((track) => track.stop());
+    };
+    (async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        if (stopped) { stream.getTracks().forEach((track) => track.stop()); return; }
+        const video = videoRef.current;
+        if (!video) return;
+        video.srcObject = stream;
+        await video.play().catch(() => {});
+        const tick = async () => {
+          if (stopped) return;
+          if (video.readyState >= 2) {
+            try {
+              const codes = await detector!.detect(video);
+              if (codes.length && codes[0].rawValue) {
+                onResultRef.current(codes[0].rawValue);
+                cleanup();
+                return;
+              }
+            } catch { /* 继续检测 */ }
+          }
+          raf = requestAnimationFrame(tick);
+        };
+        raf = requestAnimationFrame(tick);
+      } catch {
+        setState("denied");
+      }
+    })();
+    return cleanup;
+  }, []);
+
+  return <div className="scanner-backdrop" onClick={onClose}>
+    <section className="scanner-box" onClick={(event) => event.stopPropagation()}>
+      <button className="close" aria-label="关闭扫码" onClick={onClose}>×</button>
+      {state === "scanning" && <><video ref={videoRef} className="scanner-video" playsInline muted /><p>请把二维码对准摄像头</p></>}
+      {state === "unsupported" && <div className="scanner-msg"><p>当前浏览器不支持页面内扫码</p><p>请用手机相机 App 扫描二维码，复制识别出的文字后粘贴</p></div>}
+      {state === "denied" && <div className="scanner-msg"><p>无法访问摄像头</p><p>请在浏览器设置中允许摄像头权限后重试，或改用相机 App 扫码粘贴</p></div>}
+    </section>
+  </div>;
 }
 
 function ActionModal({ modal, setModal, meSpices, onConfirm, busy }: {
