@@ -936,8 +936,12 @@ export default function Game() {
           return <div className={`player-seat ${slot} ${index === state.currentPlayer && state.status === "playing" ? "active" : ""}`} key={p.id}>
             <div className={`player-strip ${p.id === me.id ? "me" : ""}`}>
               <span className="avatar" style={{ background: p.color }}>{p.avatar ?? p.name.slice(0, 1)}</span>
-              <div className="player-meta"><b>{p.name}{p.isBot && <small> · {p.afkSince ? "AI代管中" : `${botLabels[p.botDifficulty ?? "normal"]}人机`}</small>}</b><SpiceRow values={p.spices} compact /></div>
-              <div className="player-score"><b>{scorePlayer(p)}</b><small>分 · {p.orders.length} 单</small></div>
+              <div className="player-meta">
+                <b>{p.name}{p.isBot && <small> · {p.afkSince ? "AI代管中" : `${botLabels[p.botDifficulty ?? "normal"]}人机`}</small>}</b>
+                <SpiceRow values={p.spices} />
+                <div className="seat-sub"><span className="coin small gold">{p.gold}</span><span className="coin small silver">{p.silver}</span></div>
+              </div>
+              <div className="player-score"><b>{scorePlayer(p)}</b><small>{p.orders.length} 单</small></div>
               {hotspotRole === "host" && p.id !== hostSelfId && !p.isBot && state.status === "playing" && <button className="afk-kick" onClick={() => markPlayerAfk(p.id)}>代管</button>}
             </div>
             {latestActions.has(p.id) && <LastActionBadge event={latestActions.get(p.id)!} />}
@@ -950,6 +954,7 @@ export default function Game() {
     </section>
 
     <section className="me-area">
+      {activeChat?.playerId === me.id && <div className="player-speech me-speech"><b>{activeChat.phrase}</b><span>🔊</span></div>}
       <div className="me-strip">
         <span className="avatar" style={{ background: me.color }}>{me.avatar ?? me.name.slice(0, 1)}</span>
         <div className="player-meta"><b>{me.name}<small> 你</small></b><span className="me-score">{scorePlayer(me)} 分 · {me.orders.length} 单</span></div>
