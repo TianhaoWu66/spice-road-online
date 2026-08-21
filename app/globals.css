@@ -476,7 +476,8 @@ input, select { border: 1px solid #d7c6aa; background: #fffdf7; color: var(--ink
 
 /* ===== 热点联机（WebRTC 无服务器） ===== */
 .hotspot-entries { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
-.hotspot-entries .ghost { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.3); color: #fff8e8; }
+.hotspot-entries .ghost { background: #fffdf7; border: 1px solid rgba(113,56,47,.4); color: var(--wine); }
+.hotspot-entries .ghost small { color: var(--muted); }
 .hotspot-entries small { display: block; font-weight: 400; font-size: 12px; opacity: .82; margin-top: 2px; }
 .hotspot-panel { max-width: 520px; margin: 0 auto; padding: 28px 22px; display: flex; flex-direction: column; gap: 14px; text-align: left; }
 .hotspot-panel h1 { margin: 0; font-size: 30px; }
