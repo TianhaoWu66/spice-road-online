@@ -49,8 +49,15 @@ def validate_registration(username, password, nickname):
         raise ValueError("昵称长度需为 1–12 个字符")
 
 
+PHOTO_AVATAR_MAX_LENGTH = 300_000
+
+
 def is_profile_avatar(value):
-    return isinstance(value, str) and value in PROFILE_AVATARS
+    if not isinstance(value, str):
+        return False
+    if value in PROFILE_AVATARS:
+        return True
+    return value.startswith("data:image/") and len(value) <= PHOTO_AVATAR_MAX_LENGTH
 
 
 def public_profile(row):

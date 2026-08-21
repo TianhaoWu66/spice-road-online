@@ -1,11 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import QRCode from "qrcode";
+import jsQR from "jsqr";
+import { AirplaneGuest, AirplaneHost } from "../lib/airplane";
 import {
   ActionEvent, BotDifficulty, canAfford, CARD_CATALOG_READY, CHAT_PHRASES, ChatEvent, ChatPhrase, describeMerchant, GameAction, GameState, MerchantCard, MERCHANT_CARDS,
   ORDER_CARDS, scorePlayer, Spice, Spices, SPICE_NAMES, zeroSpices,
 } from "../lib/game";
-import { PROFILE_AVATARS, ProfileAvatar } from "../lib/profile";
+import { isPhotoAvatar, PROFILE_AVATARS, ProfileAvatar } from "../lib/profile";
 
 type RoomResponse = { code: string; version: number; token?: string; playerId?: string; state: GameState; error?: string };
 type AccountProfile = { id: string; username: string; nickname: string; avatar: ProfileAvatar };
@@ -52,6 +55,297 @@ function SpiceRow({ values, compact = false }: { values: Spices; compact?: boole
 
 function Arrow() { return <span className="trade-arrow">→</span>; }
 
+function AvatarFace({ avatar, name, color, fallback }: { avatar?: string; name: string; color?: string; fallback?: string }) {
+  if (avatar && avatar.startsWith("data:image/")) {
+    return <span className="avatar" style={{ background: color }}><img src={avatar} alt={name} /></span>;
+  }
+  return <span className="avatar" style={{ background: color }}>{avatar ?? fallback ?? name.slice(0, 1)}</span>;
+}
+
+function PhotoCropModal({ file, onCancel, onConfirm }: { file: File; onCancel: () => void; onConfirm: (dataUrl: `data:image/${string}`) => void }) {
+  const CROP = 260;
+  const [img, setImg] = useState<HTMLImageElement | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const pinchDist = useRef(0);
+
+  useEffect(() => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      setImg(image);
+      const min = Math.max(CROP / image.naturalWidth, CROP / image.naturalHeight);
+      setZoom(Math.ceil(min * 100) / 100);
+      setOffset({ x: 0, y: 0 });
+    };
+    image.src = url;
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  const minZoom = img ? Math.max(CROP / img.naturalWidth, CROP / img.naturalHeight) : 1;
+  const maxZoom = Math.max(minZoom * 4, minZoom + 0.5);
+
+  const clamp = (z: number, off: { x: number; y: number }) => {
+    if (!img) return off;
+    const maxX = Math.max(0, (img.naturalWidth * z - CROP) / 2);
+    const maxY = Math.max(0, (img.naturalHeight * z - CROP) / 2);
+    return { x: Math.min(maxX, Math.max(-maxX, off.x)), y: Math.min(maxY, Math.max(-maxY, off.y)) };
+  };
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onCancel(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      setZoom((current) => {
+        const next = Math.min(maxZoom, Math.max(minZoom, current * (event.deltaY < 0 ? 1.12 : 0.89)));
+        setOffset((off) => clamp(next, off));
+        return next;
+      });
+    };
+    stage.addEventListener("wheel", onWheel, { passive: false });
+    return () => stage.removeEventListener("wheel", onWheel);
+  });
+
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pointers.current.size === 2) {
+      const [a, b] = [...pointers.current.values()];
+      pinchDist.current = Math.hypot(a.x - b.x, a.y - b.y);
+    }
+    setDragging(true);
+  };
+
+  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const prev = pointers.current.get(event.pointerId);
+    if (!prev) return;
+    const next = { x: event.clientX, y: event.clientY };
+    pointers.current.set(event.pointerId, next);
+    if (pointers.current.size === 1) {
+      setOffset((off) => clamp(zoom, { x: off.x + next.x - prev.x, y: off.y + next.y - prev.y }));
+    } else if (pointers.current.size === 2) {
+      const [a, b] = [...pointers.current.values()];
+      const dist = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinchDist.current > 0) {
+        const factor = dist / pinchDist.current;
+        setZoom((current) => {
+          const next = Math.min(maxZoom, Math.max(minZoom, current * factor));
+          setOffset((off) => clamp(next, off));
+          return next;
+        });
+      }
+      pinchDist.current = dist;
+    }
+  };
+
+  const endPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    pointers.current.delete(event.pointerId);
+    if (pointers.current.size < 2) pinchDist.current = 0;
+    if (pointers.current.size === 0) setDragging(false);
+  };
+
+  const confirm = () => {
+    if (!img) return;
+    const z = zoom;
+    const srcSize = CROP / z;
+    const srcX = img.naturalWidth / 2 - offset.x / z - srcSize / 2;
+    const srcY = img.naturalHeight / 2 - offset.y / z - srcSize / 2;
+    const canvas = document.createElement("canvas");
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(img, srcX, srcY, srcSize, srcSize, 0, 0, 128, 128);
+    onConfirm(canvas.toDataURL("image/jpeg", 0.85) as `data:image/${string}`);
+  };
+
+  return (
+    <div className="photo-crop-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onCancel(); }}>
+      <section className="photo-crop-modal" role="dialog" aria-modal="true" aria-labelledby="photo-crop-title">
+        <h2 id="photo-crop-title">调整照片</h2>
+        <p className="photo-crop-hint">拖动照片移动，滑杆或双指缩放；圆形内即最终头像区域</p>
+        <div className={`crop-stage ${dragging ? "dragging" : ""}`} ref={stageRef}
+          onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endPointer} onPointerCancel={endPointer}>
+          {img && <img className="crop-img" src={img.src} alt="头像照片" draggable={false}
+            style={{ width: img.naturalWidth, height: img.naturalHeight, transform: `translate(-50%, -50%) translate(${offset.x}px, ${offset.y}px) scale(${zoom})` }} />}
+          <div className="crop-ring" />
+        </div>
+        <input className="crop-zoom" type="range" min={minZoom} max={maxZoom} step={0.01} value={zoom} disabled={!img} aria-label="缩放照片"
+          onChange={(event) => { const next = Number(event.target.value); setZoom(next); setOffset((off) => clamp(next, off)); }} />
+        <div className="photo-crop-actions">
+          <button className="photo-crop-cancel" onClick={onCancel}>取消</button>
+          <button className="photo-crop-confirm" disabled={!img} onClick={confirm}>使用此区域</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function QrCode({ text, size = 230 }: { text: string; size?: number }) {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+    QRCode.toCanvas(canvas, text, { width: size, margin: 1, errorCorrectionLevel: "L" }, (error) => { if (error) console.error(error); });
+  }, [text, size]);
+  return <canvas ref={ref} className="qr-canvas" />;
+}
+
+function FullscreenQr({ title, text, onClose }: { title: string; text: string; onClose: () => void }) {
+  return (
+    <div className="qr-fullscreen" onClick={onClose}>
+      <p className="qr-fullscreen-title">{title}</p>
+      <QrCode text={text} size={Math.min(480, Math.floor(window.innerWidth * 0.92))} />
+      <button onClick={onClose}>关闭</button>
+    </div>
+  );
+}
+
+function QrScanner({ label, onDetect, onCancel }: { label: string; onDetect: (text: string) => void; onCancel: () => void }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [error, setError] = useState("");
+  const onDetectRef = useRef(onDetect);
+  useEffect(() => { onDetectRef.current = onDetect; }, [onDetect]);
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+    let raf = 0;
+    let stopped = false;
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const tick = () => {
+      if (stopped) return;
+      const video = videoRef.current;
+      if (!video || !video.videoWidth || !ctx) { raf = requestAnimationFrame(tick); return; }
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0);
+      try {
+        const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const result = jsQR(frame.data, frame.width, frame.height);
+        if (result?.data) { onDetectRef.current(result.data); return; }
+      } catch { /* 忽略单帧失败 */ }
+      raf = requestAnimationFrame(tick);
+    };
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError("当前浏览器不支持摄像头扫码");
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false })
+      .then((media) => {
+        if (stopped) { media.getTracks().forEach((track) => track.stop()); return; }
+        stream = media;
+        if (videoRef.current) {
+          videoRef.current.srcObject = media;
+          void videoRef.current.play();
+          raf = requestAnimationFrame(tick);
+        }
+      })
+      .catch((scanError) => setError("无法打开摄像头：" + (scanError instanceof Error ? scanError.message : String(scanError))));
+    return () => {
+      stopped = true;
+      cancelAnimationFrame(raf);
+      stream?.getTracks().forEach((track) => track.stop());
+    };
+  }, []);
+  return (
+    <div className="qr-scanner">
+      <div className="qr-scanner-head"><b>{label}</b><button aria-label="关闭扫码" onClick={onCancel}>×</button></div>
+      <div className="qr-scanner-body"><video ref={videoRef} playsInline muted /><span className="qr-frame" /></div>
+      {error ? <p className="qr-scanner-error">{error}</p> : <p className="qr-scanner-hint">将二维码放入框内，自动识别</p>}
+      <button className="qr-scanner-cancel" onClick={onCancel}>取消</button>
+    </div>
+  );
+}
+
+function AirplaneInviteModal({ host, onClose }: { host: AirplaneHost; onClose: () => void }) {
+  const [invite, setInvite] = useState("");
+  const [scanner, setScanner] = useState(false);
+  const [pasteAnswer, setPasteAnswer] = useState("");
+  const [fullscreen, setFullscreen] = useState(false);
+  const [message, setMessage] = useState("");
+  const [peers, setPeers] = useState(0);
+  const [players, setPlayers] = useState(host.playerCount);
+  useEffect(() => {
+    const offPeers = host.onPeers(setPeers);
+    const offState = host.onState(() => setPlayers(host.playerCount));
+    return () => { offPeers(); offState(); };
+  }, [host]);
+  const makeInvite = async () => {
+    try {
+      setInvite(await host.createInvite());
+      setMessage("");
+    } catch (inviteError) {
+      setMessage(inviteError instanceof Error ? inviteError.message : "生成邀请失败");
+    }
+  };
+  const onScanned = async (text: string) => {
+    setScanner(false);
+    await applyAnswer(text);
+  };
+  const applyAnswer = async (text: string) => {
+    try {
+      await host.acceptAnswer(text.trim());
+      setInvite("");
+      setPasteAnswer("");
+      setMessage(`✓ 已连接一位玩家（当前房间 ${players + 1} 人）`);
+    } catch (scanError) {
+      setMessage(scanError instanceof Error ? scanError.message : "连接失败，请重试");
+    }
+  };
+  const copyInvite = async () => {
+    if (!invite) return;
+    try {
+      await navigator.clipboard.writeText(invite);
+      setMessage("邀请码已复制，请发送给对方粘贴");
+    } catch {
+      setMessage("复制失败，请长按下方邀请码手动复制");
+    }
+  };
+  const shareInvite = async () => {
+    if (!invite) return;
+    const shareUrl = `${window.location.origin}${window.location.pathname}?invite=${encodeURIComponent(invite)}`;
+    try {
+      if (navigator.share) await navigator.share({ title: "香料商路 · 离线联机邀请", text: invite, url: shareUrl });
+      else await copyInvite();
+    } catch {
+      /* 用户取消分享 */
+    }
+  };
+  return (
+    <div className="photo-crop-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
+      <section className="airplane-invite" role="dialog" aria-modal="true" aria-labelledby="airplane-invite-title">
+        <h2 id="airplane-invite-title">✈️ 邀请玩家加入</h2>
+        <p className="photo-crop-hint">房主开启手机热点，其他玩家连接热点后：① 点「生成邀请码」让对方扫码；② 对方扫码后生成回执，房主再扫对方手机上的回执。全程无需互联网。</p>
+        <div className="invite-steps">
+          <div className="invite-step"><b>1</b><div><span>每位玩家生成一份邀请码</span><button className="primary" onClick={makeInvite}>{invite ? "重新生成" : "生成邀请二维码"}</button></div></div>
+          {invite && <div className="invite-qr"><QrCode text={invite} /><button className="qr-fullscreen-btn" onClick={() => setFullscreen(true)}>🔍 全屏二维码（更好扫）</button><p className="invite-code">{invite}</p></div>}
+          {invite && <div className="invite-share-row"><button onClick={() => void copyInvite()}>复制邀请码</button><button onClick={() => void shareInvite()}>📤 系统分享</button></div>}
+          <div className="invite-step"><b>2</b><div><span>玩家连接后会生成回执，房主扫描或粘贴回执完成连接</span><button onClick={() => setScanner(true)}>📷 扫描回执</button></div></div>
+          <div className="invite-paste-answer">
+            <textarea className="invite-paste" value={pasteAnswer} rows={3} onChange={(event) => setPasteAnswer(event.target.value)} placeholder="或把对方发来的回执粘贴到这里" />
+            <button className="primary wide" disabled={!pasteAnswer.trim() || !invite} onClick={() => void applyAnswer(pasteAnswer)}>粘贴并连接</button>
+          </div>
+        </div>
+        <div className="invite-status">已连接设备：{peers} · 房间内玩家：{players}/{host.maxPlayers}</div>
+        {message && <p className="invite-message">{message}</p>}
+        <button className="primary wide" onClick={onClose}>完成</button>
+      </section>
+      {scanner && <QrScanner label="扫描加入者回执" onDetect={onScanned} onCancel={() => setScanner(false)} />}
+      {fullscreen && <FullscreenQr title="房主邀请码 · 让加入者扫描" text={invite} onClose={() => setFullscreen(false)} />}
+    </div>
+  );
+}
+
 function ThemeSwitcher({ value, onChange }: { value: VisualTheme; onChange: (value: VisualTheme) => void }) {
   return <div className="theme-switcher" aria-label="卡牌风格">
     {(Object.keys(themeLabels) as VisualTheme[]).map((theme) => <button aria-pressed={value === theme} title={`${themeLabels[theme]}风格`} key={theme} onClick={() => onChange(theme)}><i />{themeLabels[theme]}</button>)}
@@ -85,7 +379,7 @@ function ActionReveal({ event }: { event: ActionEvent }) {
   const detail = event.times && event.times > 1 ? `连续交易 ${event.times} 次` : upgradePath || (event.upgradeCount ? `升级 ${event.upgradeCount} 次` : "");
   return <div className="action-reveal" role="status" aria-live="polite">
     <section className={`action-stage action-${event.type.toLowerCase()}`}>
-      <div className="action-player"><span className="avatar" style={{ background: event.playerColor }}>{event.playerAvatar ?? event.playerName.slice(0, 1)}</span><div><b>{event.playerName}</b><small>{label}</small></div></div>
+      <div className="action-player"><AvatarFace avatar={event.playerAvatar} name={event.playerName} color={event.playerColor} /><div><b>{event.playerName}</b><small>{label}</small></div></div>
       {card && <div className={`merchant-card card-${card.type} reveal-card-face`}><MerchantFace card={card} /></div>}
       {event.orderId && <div className="order-card reveal-order"><OrderFace orderId={event.orderId} /></div>}
       {event.type === "REST" && <div className="rest-reveal"><span>☾</span><b>收回全部商人牌</b></div>}
@@ -158,6 +452,17 @@ export default function Game() {
   const [password, setPassword] = useState("");
   const [registerNickname, setRegisterNickname] = useState("");
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const avatarFileRef = useRef<HTMLInputElement | null>(null);
+  const [cropFile, setCropFile] = useState<File | null>(null);
+  const [airplane, setAirplane] = useState<{ role: "host" | "guest"; host?: AirplaneHost; guest?: AirplaneGuest } | null>(null);
+  const [airplaneScreen, setAirplaneScreen] = useState<"menu" | "guest" | null>(null);
+  const [guestOffer, setGuestOffer] = useState("");
+  const [guestAnswer, setGuestAnswer] = useState("");
+  const [guestConnected, setGuestConnected] = useState(false);
+  const [scannerFor, setScannerFor] = useState<"offer" | null>(null);
+  const [showInvite, setShowInvite] = useState(false);
+  const [guestQrFullscreen, setGuestQrFullscreen] = useState(false);
   const observedEventId = useRef<number | null>(null);
   const observedRoomCode = useRef<string | null>(null);
   const observedChatId = useRef<number | null>(null);
@@ -166,6 +471,7 @@ export default function Game() {
   const token = typeof window !== "undefined" ? localStorage.getItem(`silk-token-${room?.code}`) ?? "" : "";
   const me = room?.state.players.find((p) => p.id === localStorage.getItem(`silk-player-${room?.code}`));
   const myIndex = room?.state.players.findIndex((p) => p.id === me?.id) ?? -1;
+  const isLanServer = typeof window !== "undefined" && /^\d{1,3}(\.\d{1,3}){3}$/.test(window.location.hostname);
   const pendingDiscard = room?.state.pendingDiscard;
   const mustDiscard = pendingDiscard?.playerId === me?.id;
   const isMyTurn = room?.state.status === "playing" && room.state.currentPlayer === myIndex && !mustDiscard && !activeEvent && actionQueue.length === 0;
@@ -194,44 +500,168 @@ export default function Game() {
     } finally { setAuthBusy(false); }
   };
 
+  const handleAvatarPhoto = async (file: File | undefined) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setAuthError("请选择图片文件（JPG/PNG 等）");
+      return;
+    }
+    setCropFile(file);
+  };
+
+  const applyAvatarPhoto = async (dataUrl: `data:image/${string}`) => {
+    setCropFile(null);
+    setAvatarBusy(true);
+    setAuthError("");
+    try {
+      await accountRequest("avatar", dataUrl);
+    } catch (photoError) {
+      setAuthError(photoError instanceof Error ? photoError.message : "照片处理失败");
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
+
+  const createOfflineRoom = async () => {
+    if (!name.trim()) { setError("请输入昵称"); return; }
+    const host = new AirplaneHost(name.trim(), maxPlayers);
+    setAirplane({ role: "host", host });
+    host.onState((state, version) => setRoom((current) => !current || version >= current.version ? { code: host.code, version, state } : current));
+    const data = host.request({ command: "create", name: name.trim(), maxPlayers });
+    if (data.error) {
+      setError(data.error);
+      host.dispose();
+      setAirplane(null);
+      return;
+    }
+    applyRoomResponse(data);
+  };
+
+  const connectGuest = async (offer?: string) => {
+    const code = (offer ?? guestOffer).trim();
+    if (!code) { setError("请先扫描或粘贴邀请码"); return; }
+    setBusy(true);
+    setError("");
+    try {
+      const guest = new AirplaneGuest();
+      const answer = await guest.connect(code);
+      setAirplane({ role: "guest", guest });
+      setGuestAnswer(answer);
+      guest.onOpen(() => setGuestConnected(true));
+      guest.onState((state, version) => setRoom((current) => !current || version >= current.version ? { code: guest.roomCode, version, state } : current));
+    } catch (connectError) {
+      setError(connectError instanceof Error ? connectError.message : "连接失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const extractInvite = (text: string): string => {
+    const trimmed = text.trim();
+    if (trimmed.startsWith("SR")) return trimmed;
+    const match = trimmed.match(/[?&]invite=([^&]+)/);
+    return match ? decodeURIComponent(match[1]) : "";
+  };
+
+  const joinOfflineRoom = async () => {
+    const guest = airplane?.role === "guest" ? airplane.guest : null;
+    if (!guest) return;
+    setBusy(true);
+    setError("");
+    try {
+      const data = await guest.request({ command: "join", name: name.trim(), code: guest.roomCode });
+      if (data.error) throw new Error(data.error);
+      applyRoomResponse(data);
+    } catch (joinError) {
+      setError(joinError instanceof Error ? joinError.message : "加入失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const goHome = () => {
+    airplane?.host?.dispose();
+    airplane?.guest?.dispose();
+    setAirplane(null);
+    setAirplaneScreen(null);
+    setGuestOffer("");
+    setGuestAnswer("");
+    setGuestConnected(false);
+    setShowInvite(false);
+    window.location.hash = "";
+    setRoom(null);
+  };
+
+  const applyRoomResponse = (data: RoomResponse) => {
+    setRoom(data);
+    if (data.token) {
+      localStorage.setItem(`silk-token-${data.code}`, data.token);
+      const player = data.playerId
+        ? data.state.players.find((candidate) => candidate.id === data.playerId)
+        : data.state.players.find((candidate) => candidate.name === name.trim());
+      if (player) localStorage.setItem(`silk-player-${data.code}`, player.id);
+    }
+    window.history.replaceState({}, "", `#${data.code}`);
+  };
+
   const request = useCallback(async (body: Record<string, unknown>) => {
     setBusy(true); setError("");
     try {
-      const response = await fetch("/api/room", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await response.json() as RoomResponse;
-      if (!response.ok) throw new Error(data.error || "操作失败");
-      setRoom(data);
-      if (data.token) {
-        localStorage.setItem(`silk-token-${data.code}`, data.token);
-        const player = data.playerId ? data.state.players.find((candidate) => candidate.id === data.playerId) : data.state.players.find((candidate) => candidate.name === name.trim());
-        if (player) localStorage.setItem(`silk-player-${data.code}`, player.id);
+      let data: RoomResponse;
+      if (airplane?.role === "host" && airplane.host) {
+        data = airplane.host.request(body);
+        if (data.error) throw new Error(data.error);
+      } else if (airplane?.role === "guest" && airplane.guest) {
+        data = await airplane.guest.request(body);
+        if (data.error) throw new Error(data.error);
+      } else {
+        const response = await fetch("/api/room", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        data = await response.json() as RoomResponse;
+        if (!response.ok) throw new Error(data.error || "操作失败");
       }
-      window.history.replaceState({}, "", `#${data.code}`);
+      applyRoomResponse(data);
       return data;
     } catch (e) {
       setError(e instanceof Error ? e.message : "连接失败");
       return null;
     } finally { setBusy(false); }
-  }, [name]);
+  }, [airplane, name]);
 
   const refresh = useCallback(async (code: string, quiet = false) => {
     try {
-      const response = await fetch(`/api/room?code=${code}`, { cache: "no-store" });
-      const data = await response.json() as RoomResponse;
-      if (!response.ok) throw new Error(data.error || "读取房间失败");
+      let data: RoomResponse;
+      if (airplane?.role === "host" && airplane.host) {
+        data = airplane.host.request({ command: "__refresh" });
+      } else if (airplane?.role === "guest" && airplane.guest) {
+        data = await airplane.guest.request({ command: "__refresh" });
+      } else {
+        const response = await fetch(`/api/room?code=${code}`, { cache: "no-store" });
+        data = await response.json() as RoomResponse;
+        if (!response.ok) throw new Error(data.error || "读取房间失败");
+      }
+      if (data.error) throw new Error(data.error);
       setRoom((current) => !current || data.version >= current.version ? data : current);
     } catch (e) {
       if (!quiet) setError(e instanceof Error ? e.message : "连接失败");
     }
-  }, []);
+  }, [airplane]);
 
   useEffect(() => {
     const code = window.location.hash.slice(1).toUpperCase();
     if (code.length === 6) { setJoinCode(code); refresh(code, true); }
   }, [refresh]);
+
+  useEffect(() => {
+    const invite = new URLSearchParams(window.location.search).get("invite");
+    if (invite) {
+      setGuestOffer(invite);
+      setAirplaneScreen("guest");
+      window.history.replaceState({}, "", window.location.pathname + window.location.hash);
+    }
+  }, []);
 
   useEffect(() => {
     if (!room?.code) return;
@@ -368,10 +798,13 @@ export default function Game() {
         </div>}
         {!authReady && <div className="auth-loading">正在读取登录状态…</div>}
         {authReady && account && <div className="account-card">
-          <button className="profile-avatar" aria-label="更换头像" onClick={() => setShowAvatarPicker((visible) => !visible)}>{account.avatar}<small>更换</small></button>
+          <button className="profile-avatar" aria-label="更换头像" onClick={() => setShowAvatarPicker((visible) => !visible)}>{isPhotoAvatar(account.avatar) ? <img src={account.avatar} alt={account.nickname} /> : account.avatar}<small>更换</small></button>
           <div><b>{account.nickname}</b><span>@{account.username}</span></div>
           <button className="account-logout" disabled={authBusy} onClick={() => accountRequest("logout")}>退出</button>
-          {showAvatarPicker && <div className="avatar-picker" aria-label="选择头像">{PROFILE_AVATARS.map((avatar) => <button aria-pressed={account.avatar === avatar} key={avatar} disabled={authBusy} onClick={() => accountRequest("avatar", avatar)}>{avatar}</button>)}</div>}
+          {showAvatarPicker && <div className="avatar-picker" aria-label="选择头像">{PROFILE_AVATARS.map((avatar) => <button aria-pressed={account.avatar === avatar} key={avatar} disabled={authBusy || avatarBusy} onClick={() => accountRequest("avatar", avatar)}>{avatar}</button>)}
+            <button className="avatar-upload" aria-pressed={isPhotoAvatar(account.avatar)} disabled={authBusy || avatarBusy} onClick={() => avatarFileRef.current?.click()}>{avatarBusy ? "处理中…" : "📷 上传照片"}</button>
+            <input ref={avatarFileRef} type="file" accept="image/*" hidden onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void handleAvatarPhoto(file); }} />
+          </div>}
         </div>}
         {authReady && !account && authMode === "login" && <div className="auth-form">
           <label>账号<input value={username} maxLength={24} autoComplete="username" onChange={(event) => setUsername(event.target.value)} placeholder="字母、数字或下划线" /></label>
@@ -397,7 +830,43 @@ export default function Game() {
             <input aria-label="房间码" value={joinCode} maxLength={6} onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} placeholder="六位房间码" />
             <button disabled={busy || !name.trim() || joinCode.length !== 6} onClick={() => request({ command: "join", name, code: joinCode })}>加入</button>
           </div>
+          {isLanServer && <div className="lan-banner">📡 已连接局域网服务器 · 输房间码即可直连加入，无需二维码</div>}
+          <div className="airplane-entry">
+            <div className="airplane-title"><span>✈️</span><div><b>离线联机（飞机模式）</b><small>无需互联网 · 手机热点扫码直连</small></div></div>
+            <div className="airplane-actions">
+              <button disabled={busy || !name.trim()} onClick={() => void createOfflineRoom()}>创建离线房间</button>
+              <button disabled={busy} onClick={() => { setAirplaneScreen("guest"); setError(""); }}>加入离线房间</button>
+            </div>
+          </div>
         </div>}
+        {airplaneScreen === "guest" && <div className="guest-connect">
+          {!airplane && <>
+            <p className="eyebrow">离线联机</p>
+            <h2>加入房主</h2>
+            <p className="modal-help">确保你已连接房主的手机热点，然后扫描或粘贴房主生成的邀请码。</p>
+            <button className="primary wide" onClick={() => setScannerFor("offer")}>📷 扫描房主邀请码</button>
+            <div className="divider"><span>或粘贴邀请码</span></div>
+            <textarea className="invite-paste" value={guestOffer} rows={3} onChange={(event) => setGuestOffer(event.target.value)} placeholder="粘贴以 SR2:/SR3: 开头的邀请码" />
+            <button className="primary wide" disabled={!guestOffer.trim() || busy} onClick={() => void connectGuest()}>{busy ? "连接中…" : "连接房主"}</button>
+            <button className="text-button" onClick={() => { setAirplaneScreen(null); setGuestOffer(""); setGuestAnswer(""); setGuestConnected(false); setScannerFor(null); }}>返回</button>
+          </>}
+          {airplane && guestAnswer && <div className="guest-answer">
+            <p className="modal-help">连接已建立！请让房主扫描下方回执：</p>
+            <QrCode text={guestAnswer} size={200} />
+            <button className="qr-fullscreen-btn" onClick={() => setGuestQrFullscreen(true)}>🔍 全屏二维码（更好扫）</button>
+            <p className="invite-code">{guestAnswer}</p>
+            <div className="invite-share-row">
+              <button onClick={async () => { try { await navigator.clipboard.writeText(guestAnswer); setError("回执已复制，请发给房主粘贴"); } catch { setError("复制失败，请长按上方文字复制"); } }}>复制回执</button>
+              <button onClick={async () => { try { if (navigator.share) await navigator.share({ title: "香料商路 · 离线联机回执", text: guestAnswer }); else await navigator.clipboard.writeText(guestAnswer); } catch { /* 用户取消分享 */ } }}>📤 分享回执</button>
+            </div>
+            {guestConnected
+              ? <button className="primary wide" disabled={!name.trim() || busy} onClick={() => void joinOfflineRoom()}>加入商队（{name.trim() || "请先输入昵称"}）</button>
+              : <div className="waiting-pulse"><i />等待房主确认连接…</div>}
+            <button className="text-button" onClick={() => { airplane.guest?.dispose(); setAirplane(null); setGuestAnswer(""); setGuestConnected(false); }}>取消连接</button>
+          </div>}
+          {scannerFor === "offer" && <QrScanner label="扫描房主邀请码" onDetect={(text) => { setScannerFor(null); const invite = extractInvite(text); if (!invite) { setError("未识别到有效的邀请码，请对准二维码重试"); return; } setGuestOffer(invite); void connectGuest(invite); }} onCancel={() => setScannerFor(null)} />}
+        </div>}
+        {guestQrFullscreen && <FullscreenQr title="我的回执 · 请让房主扫描" text={guestAnswer} onClose={() => setGuestQrFullscreen(false)} />}
         {room && !me && room.state.status === "lobby" && <button className="text-button" onClick={reconnectKnownPlayer}>返回已有席位</button>}
         {authError && <div className="error-box">{authError}</div>}
         {error && <div className="error-box">{error}</div>}
@@ -405,6 +874,7 @@ export default function Game() {
       </section>
       <footer>非官方玩法原型 · 使用原创界面与牌面</footer>
       {showRules && <RulesGuide onClose={() => setShowRules(false)} />}
+      {cropFile && <PhotoCropModal file={cropFile} onCancel={() => setCropFile(null)} onConfirm={applyAvatarPhoto} />}
     </main>;
   }
 
@@ -419,14 +889,16 @@ export default function Game() {
   if (room.state.status === "lobby") {
     const isHost = me.id === room.state.hostId;
     return <main className={`lobby-shell theme-${visualTheme}`}>
-      <header className="topbar"><div className="wordmark">香料商路</div><div className="header-actions"><ThemeSwitcher value={visualTheme} onChange={setVisualTheme} /><button className="room-code" onClick={copyInvite}><small>房间码</small>{room.code}<span>{copied ? "已复制" : "复制邀请"}</span></button></div></header>
+      <header className="topbar"><div className="wordmark">香料商路</div><div className="header-actions">{airplane?.role === "host" && <button className="room-code invite-btn" onClick={() => setShowInvite(true)}><small>✈️</small>邀请玩家</button>}<ThemeSwitcher value={visualTheme} onChange={setVisualTheme} /><button className="room-code" onClick={copyInvite}><small>房间码</small>{room.code}<span>{copied ? "已复制" : "复制邀请"}</span></button></div></header>
       <section className="lobby-panel">
         <p className="eyebrow">等待商队集结</p><h1>{room.state.players.length} / {room.state.maxPlayers} 位玩家</h1>
         <div className="seats">
           {Array.from({ length: room.state.maxPlayers }).map((_, i) => {
             const player = room.state.players[i];
-            return <div className={`seat ${player ? "filled" : ""}`} key={i}>
-              <span className="avatar" style={{ background: player?.color }}>{player ? player.avatar ?? player.name.slice(0, 1) : i + 1}</span>
+            const angle = (90 + i * (360 / room.state.maxPlayers)) * (Math.PI / 180);
+            const seatStyle = { left: `${50 + 38 * Math.cos(angle)}%`, top: `${50 + 38 * Math.sin(angle)}%` };
+            return <div className={`seat ${player ? "filled" : ""}`} style={seatStyle} key={i}>
+              <AvatarFace avatar={player?.avatar} name={player?.name ?? ""} color={player?.color} fallback={player ? undefined : String(i + 1)} />
               <div><b>{player?.name ?? "等待加入"}</b><small>{player?.id === room.state.hostId ? "房主" : player?.isBot ? `${botLabels[player.botDifficulty ?? "normal"]}人机` : player ? "已就绪" : "空席位"}</small></div>
               {isHost && player?.isBot && <button className="remove-bot" disabled={busy} onClick={() => request({ command: "removeBot", code: room.code, token, botId: player.id })}>移除</button>}
             </div>;
@@ -441,12 +913,13 @@ export default function Game() {
           : <div className="waiting-pulse"><i />等待房主开始游戏</div>}
         {error && <div className="error-box">{error}</div>}
       </section>
+      {showInvite && airplane?.role === "host" && airplane.host && <AirplaneInviteModal host={airplane.host} onClose={() => setShowInvite(false)} />}
     </main>;
   }
 
   if (!CARD_CATALOG_READY) {
     return <main className={`catalog-shell theme-${visualTheme}`}>
-      <section className="catalog-empty-state"><div className="empty-card-stack"><i /><i /><i /></div><p className="eyebrow">卡牌库整理中</p><h1>所有旧卡已移除</h1><p>当前对局已暂停。等待新卡片按顺序录入后，即可重新开始游戏。</p><button className="primary" onClick={() => { window.location.hash = ""; setRoom(null); }}>返回首页</button></section>
+      <section className="catalog-empty-state"><div className="empty-card-stack"><i /><i /><i /></div><p className="eyebrow">卡牌库整理中</p><h1>所有旧卡已移除</h1><p>当前对局已暂停。等待新卡片按顺序录入后，即可重新开始游戏。</p><button className="primary" onClick={goHome}>返回首页</button></section>
     </main>;
   }
 
@@ -456,60 +929,91 @@ export default function Game() {
   const latestActions = new Map<string, ActionEvent>();
   (state.actionEvents ?? []).forEach((event) => latestActions.set(event.playerId, event));
 
+  const seatOf = (index: number) => {
+    const total = state.players.length;
+    const offset = (index - myIndex + total) % total;
+    if (offset === 0) return "bottom";
+    if (total === 2) return "top";
+    if (total === 3) return offset === 1 ? "left" : "right";
+    if (total === 4) return offset === 1 ? "left" : offset === 2 ? "top" : "right";
+    return offset === 1 ? "left" : offset === 2 ? "top-left" : offset === 3 ? "top-right" : "right";
+  };
+
+  const seatStrip = (p: (typeof state.players)[number], index: number) => (
+    <div className={`player-strip seat-${seatOf(index)} ${index === state.currentPlayer && state.status === "playing" ? "active" : ""} ${p.id === me.id ? "me" : ""}`} key={p.id}>
+      <AvatarFace avatar={p.avatar} name={p.name} color={p.color} />
+      <div className="player-meta"><b>{p.name}{p.id === me.id && <small> 你</small>}{p.isBot && <small> · {p.afkSince ? "AI代管中" : `${botLabels[p.botDifficulty ?? "normal"]}人机`}</small>}</b><SpiceRow values={p.spices} compact /></div>
+      <div className="player-score"><b>{scorePlayer(p)}</b><small>分 · {p.orders.length} 单</small></div>
+      {latestActions.has(p.id) && <LastActionBadge event={latestActions.get(p.id)!} />}
+      {activeChat?.playerId === p.id && <div className="player-speech"><b>{activeChat.phrase}</b><span>🔊</span></div>}
+    </div>
+  );
+
   return <main className={`game-shell theme-${visualTheme}`}>
     <header className="game-header">
       <div className="wordmark">香料商路</div>
       <div className="round-info"><span>第 {state.round} 轮</span><b>{state.status === "finished" ? "结算" : mustDiscard ? "请选择放回的香料" : isMyTurn ? "轮到你行动" : `等待 ${current.name}`}</b>{state.finalRound && <em>最后一轮</em>}</div>
-      <div className="header-actions"><ThemeSwitcher value={visualTheme} onChange={setVisualTheme} /><button className="room-code mini" onClick={copyInvite}><small>房间</small>{state.status === "finished" ? "战报" : room.code}</button></div>
+      <div className="header-actions">{airplane?.role === "host" && <button className="room-code mini invite-btn" onClick={() => setShowInvite(true)}><small>✈️</small>邀请</button>}<ThemeSwitcher value={visualTheme} onChange={setVisualTheme} /><button className="room-code mini" onClick={copyInvite}><small>房间</small>{state.status === "finished" ? "战报" : room.code}</button></div>
     </header>
 
-    <aside className="players-panel">
-      {state.players.map((p, index) => <div className={`player-strip ${index === state.currentPlayer && state.status === "playing" ? "active" : ""} ${p.id === me.id ? "me" : ""}`} key={p.id}>
-        <span className="avatar" style={{ background: p.color }}>{p.avatar ?? p.name.slice(0, 1)}</span>
-        <div className="player-meta"><b>{p.name}{p.id === me.id && <small> 你</small>}{p.isBot && <small> · {p.afkSince ? "AI代管中" : `${botLabels[p.botDifficulty ?? "normal"]}人机`}</small>}</b><SpiceRow values={p.spices} compact /></div>
-        <div className="player-score"><b>{scorePlayer(p)}</b><small>分 · {p.orders.length} 单</small></div>
-        {latestActions.has(p.id) && <LastActionBadge event={latestActions.get(p.id)!} />}
-        {activeChat?.playerId === p.id && <div className="player-speech"><b>{activeChat.phrase}</b><span>🔊</span></div>}
-      </div>)}
+    <div className="seats-top">
+      {state.players.map((p, index) => seatOf(index).startsWith("top") ? seatStrip(p, index) : null)}
+      <div className="seats-top-extra">
+        {state.players.map((p, index) => (seatOf(index) === "left" || seatOf(index) === "right") ? seatStrip(p, index) : null)}
+      </div>
+    </div>
+
+    <div className="table-stage">
+      <div className="table-players">
+        {state.players.map((p, index) => (seatOf(index) === "left" || seatOf(index) === "right") ? seatStrip(p, index) : null)}
+      </div>
+      <div className="players-mobile">
+        {state.players.map((p, index) => seatStrip(p, index))}
+      </div>
+
+      <section className="board">
+        <div className="market-heading"><div><span>订单市场</span><small>支付香料，赢取声望</small></div><div className="coin-bank"><span className="coin gold">{state.goldSupply}</span><span className="coin silver">{state.silverSupply}</span></div></div>
+        <div className="orders-row">
+          {state.orderMarket.map((id, index) => <button className="order-card" key={id} disabled={!isMyTurn || !canAfford(me.spices, ORDER_CARDS[id].cost)} onClick={() => sendAction({ type: "CLAIM", orderIndex: index })}>
+            {index === 0 && state.goldSupply > 0 && <span className="coin-float gold">+3</span>}
+            {((index === 1 && state.goldSupply > 0) || (index === 0 && state.goldSupply === 0)) && state.silverSupply > 0 && <span className="coin-float silver">+1</span>}
+            <OrderFace orderId={id} />
+          </button>)}
+        </div>
+
+        <div className="market-heading merchant-title"><div><span>商人市场</span><small>越靠右，招募费用越高</small></div></div>
+        <div className="merchant-row">
+          {state.merchantMarket.map((slot, index) => <button className={`merchant-card market-card card-${MERCHANT_CARDS[slot.cardId].type}`} disabled={!isMyTurn} key={slot.cardId} onClick={() => acquire(index)}>
+            <span className="market-cost">{index === 0 ? "免费" : `支付 ${index}`}</span>
+            <MerchantFace card={MERCHANT_CARDS[slot.cardId]} bonus={slot.bonus} />
+          </button>)}
+        </div>
+      </section>
+
       <div className="quick-chat"><b>语音快捷聊</b>{CHAT_PHRASES.map((phrase) => <button disabled={busy} key={phrase} onClick={() => request({ command: "chat", code: room.code, token, phrase: phrase as ChatPhrase })}><span>🔊</span>{phrase}</button>)}</div>
-    </aside>
 
-    <section className="board">
-      <div className="market-heading"><div><span>订单市场</span><small>支付香料，赢取声望</small></div><div className="coin-bank"><span className="coin gold">{state.goldSupply}</span><span className="coin silver">{state.silverSupply}</span></div></div>
-      <div className="orders-row">
-        {state.orderMarket.map((id, index) => <button className="order-card" key={id} disabled={!isMyTurn || !canAfford(me.spices, ORDER_CARDS[id].cost)} onClick={() => sendAction({ type: "CLAIM", orderIndex: index })}>
-          {index === 0 && state.goldSupply > 0 && <span className="coin-float gold">+3</span>}
-          {((index === 1 && state.goldSupply > 0) || (index === 0 && state.goldSupply === 0)) && state.silverSupply > 0 && <span className="coin-float silver">+1</span>}
-          <OrderFace orderId={id} />
-        </button>)}
-      </div>
-
-      <div className="market-heading merchant-title"><div><span>商人市场</span><small>越靠右，招募费用越高</small></div></div>
-      <div className="merchant-row">
-        {state.merchantMarket.map((slot, index) => <button className={`merchant-card market-card card-${MERCHANT_CARDS[slot.cardId].type}`} disabled={!isMyTurn} key={slot.cardId} onClick={() => acquire(index)}>
-          <span className="market-cost">{index === 0 ? "免费" : `支付 ${index}`}</span>
-          <MerchantFace card={MERCHANT_CARDS[slot.cardId]} bonus={slot.bonus} />
-        </button>)}
-      </div>
-    </section>
+      <aside className="game-log"><b>商路动态</b>{state.log.slice(-7).reverse().map((line, i) => <p key={`${line}-${i}`}>{line}</p>)}</aside>
+    </div>
 
     <section className="hand-panel">
-      <div className="hand-head"><div><span>你的商队</span><SpiceRow values={me.spices} /></div><div className="wallet"><span className="coin gold">{me.gold}</span><span className="coin silver">{me.silver}</span></div></div>
+      <div className="hand-head">
+        <div className="hand-me">{seatStrip(me, myIndex)}</div>
+        <div className="hand-stats"><div><span>你的商队</span><SpiceRow values={me.spices} /></div><div className="wallet"><span className="coin gold">{me.gold}</span><span className="coin silver">{me.silver}</span></div></div>
+      </div>
       <div className="hand-row">
         {me.hand.map((cardId) => <button className={`merchant-card hand-card card-${MERCHANT_CARDS[cardId].type}`} disabled={!isMyTurn} key={cardId} onClick={() => handleCard(cardId)}><MerchantFace card={MERCHANT_CARDS[cardId]} /></button>)}
         {!me.hand.length && <div className="empty-hand">手牌已全部打出</div>}
       </div>
       <button className="rest-button" disabled={!isMyTurn || !me.played.length} onClick={() => sendAction({ type: "REST" })}><span>☾</span>休息并收回 {me.played.length} 张牌</button>
     </section>
-
-    <aside className="game-log"><b>商路动态</b>{state.log.slice(-7).reverse().map((line, i) => <p key={`${line}-${i}`}>{line}</p>)}</aside>
     {error && <div className="toast" onClick={() => setError("")}>{error}</div>}
     {activeEvent && <ActionReveal key={activeEvent.id} event={activeEvent} />}
     {modal && <ActionModal modal={modal} setModal={setModal} meSpices={me.spices} onConfirm={sendAction} busy={busy} />}
     {state.status === "finished" && <div className="result-backdrop"><section className="result-card"><p className="eyebrow">商路结算</p><h1>{state.winnerIds.includes(me.id) ? "你赢得了商路盛誉" : `${ranking[0].name} 赢得了胜利`}</h1>
-      <div className="ranking">{ranking.map((p, i) => <div className={state.winnerIds.includes(p.id) ? "winner" : ""} key={p.id}><span>{i + 1}</span><i className="avatar" style={{ background: p.color }}>{p.avatar ?? p.name.slice(0, 1)}</i><b>{p.name}</b><small>{p.orders.length} 张订单</small><strong>{scorePlayer(p)} 分</strong></div>)}</div>
-      <button className="primary" onClick={() => { window.location.hash = ""; setRoom(null); }}>返回首页</button>
+      <div className="ranking">{ranking.map((p, i) => <div className={state.winnerIds.includes(p.id) ? "winner" : ""} key={p.id}><span>{i + 1}</span><AvatarFace avatar={p.avatar} name={p.name} color={p.color} /><b>{p.name}</b><small>{p.orders.length} 张订单</small><strong>{scorePlayer(p)} 分</strong></div>)}</div>
+      <button className="primary" onClick={goHome}>返回首页</button>
     </section></div>}
+    {showInvite && airplane?.role === "host" && airplane.host && <AirplaneInviteModal host={airplane.host} onClose={() => setShowInvite(false)} />}
   </main>;
 }
 
