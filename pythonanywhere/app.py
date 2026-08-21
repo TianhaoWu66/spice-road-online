@@ -396,50 +396,9 @@ def static_files(filename):
     return send_from_directory(STATIC_DIR, filename)
 
 
-# ---------- 德州扑克子应用挂载（/poker/）----------
-# 部署包内含 poker/ 子目录时，把 /poker 前缀的请求交给德州扑克，其余仍由香料商路处理。
-
-
-class _PrefixDispatcher:
-    """把指定前缀的请求交给子应用，其余交给主应用；/poker 自动 301 到 /poker/。"""
-
-    def __init__(self, default_app, prefix, sub_app):
-        self.default_app = default_app
-        self.prefix = prefix
-        self.sub_app = sub_app
-
-    def __call__(self, environ, start_response):
-        path = environ.get("PATH_INFO", "")
-        if path == self.prefix:
-            start_response("301 Moved Permanently", [("Location", self.prefix + "/"), ("Content-Length", "0")])
-            return [b""]
-        if path.startswith(self.prefix + "/"):
-            environ["SCRIPT_NAME"] = environ.get("SCRIPT_NAME", "") + self.prefix
-            environ["PATH_INFO"] = path[len(self.prefix):]
-            return self.sub_app(environ, start_response)
-        return self.default_app(environ, start_response)
-
-
-def _mount_poker():
-    try:
-        from poker.app import app as poker_app
-        return _PrefixDispatcher(app, "/poker", poker_app)
-    except Exception as exc:  # 德州扑克未部署时不影响香料商路
-        print(f"[poker] 子应用挂载失败，已跳过：{exc}")
-        return app
-
-
-application = _mount_poker()
-
-
 if __name__ == "__main__":
     with app.app_context():
         ensure_schema()
     print(f"香料商路 local server -> http://127.0.0.1:5000  (db: {DB_PATH})")
-    if application is not app:
-        from werkzeug.serving import run_simple
-        print("已挂载德州扑克子应用：http://127.0.0.1:5000/poker/")
-        run_simple("127.0.0.1", 5000, application, use_debugger=False, use_reloader=False)
-    else:
-        app.run(host="127.0.0.1", port=5000, debug=False)
+    app.run(host="127.0.0.1", port=5000, debug=False)
 

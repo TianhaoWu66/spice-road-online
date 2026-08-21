@@ -4,4 +4,4 @@ import sys
 
 sys.path.insert(0, "/home/你的用户名/spice-road")
 
-from app import application
+from app import app as application
