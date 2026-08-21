@@ -1,15 +1,10 @@
 # -*- coding: utf-8 -*-
-"""香料商路 - PythonAnywhere 版（Flask + SQLite）。
+"""德州扑克 · Flask 后端（PythonAnywhere 版）。
 
-API 契约与原 Cloudflare D1 版完全一致：
-  GET  /api/room?code=XXXXXX   读取房间
-  POST /api/room               创建/加入/人机/开局/行动/语音
-  GET  /api/auth               读取登录状态
-  POST /api/auth               注册/登录/退出/换头像
-其余路径返回静态前端页面。
-
-部署：见 README.md（PythonAnywhere 上传步骤）。
-本地运行：pip install flask && python app.py
+API：
+  GET  /api/room?code=XXXXXX     读取房间（按查看者身份隐藏底牌）
+  POST /api/room                 创建/加入/人机/下一手/行动/观战/退观/语音
+  GET/POST /api/auth             账号注册/登录/退出/头像
 """
 import json
 import os
@@ -20,12 +15,15 @@ import time
 
 from flask import Flask, g, request, send_from_directory, Response
 
-import accounts
-import game
+try:
+    from . import accounts, poker
+except ImportError:  # 直接 python app.py 运行时
+    import accounts
+    import poker
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
-DB_PATH = os.environ.get("SPICE_DB_PATH", os.path.join(BASE_DIR, "site.db"))
+DB_PATH = os.environ.get("POKER_DB_PATH", os.path.join(BASE_DIR, "site.db"))
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS rooms (
@@ -56,6 +54,8 @@ CREATE INDEX IF NOT EXISTS idx_account_sessions_expires_at ON account_sessions(e
 
 app = Flask(__name__)
 
+CHAT_PHRASES = ["老叟戏顽童", "神之一手", "你的计谋被我识破了"]
+
 
 def now_ms():
     return int(time.time() * 1000)
@@ -82,11 +82,7 @@ def ensure_schema():
 
 
 def _json_response(payload, status=200):
-    return Response(
-        json.dumps(payload, ensure_ascii=False),
-        status=status,
-        mimetype="application/json",
-    )
+    return Response(json.dumps(payload, ensure_ascii=False), status=status, mimetype="application/json")
 
 
 def _is_secure():
@@ -107,26 +103,12 @@ def _clamp_max_players(value):
     try:
         number = int(value)
     except (TypeError, ValueError):
-        number = 5
-    return max(2, min(5, number))
-
-
-def _public_state(state):
-    players = []
-    for player in state["players"]:
-        public_player = dict(player)
-        public_player.pop("token", None)
-        public_player.pop("accountId", None)
-        players.append(public_player)
-    public = dict(state)
-    public["players"] = players
-    return public
+        number = 6
+    return max(2, min(6, number))
 
 
 def _load_room(code):
-    row = get_db().execute(
-        "SELECT state, version FROM rooms WHERE code = ?", (code,)
-    ).fetchone()
+    row = get_db().execute("SELECT state, version FROM rooms WHERE code = ?", (code,)).fetchone()
     if not row:
         raise ValueError("找不到这个房间")
     return {"state": json.loads(row["state"]), "version": row["version"]}
@@ -141,29 +123,45 @@ def _save_room(code, state, version):
         raise ValueError("房间刚刚发生了变化，请重试")
     return version + 1
 
-def _find_ai_seat(state):
-    """游戏进行中，找可被真人接替的 AI 席位：优先代管席，其次常驻人机。"""
-    for player in state["players"]:
-        if player.get("isBot") and "afkSince" in player:
-            return player
-    for player in state["players"]:
-        if player.get("isBot"):
-            return player
-    return None
+
+def public_poker_state(state, viewer_id=None, is_spectator=False):
+    """隐藏他人底牌；观战者看不到任何底牌。"""
+    players = []
+    for p in state["players"]:
+        copy = dict(p)
+        if is_spectator or (viewer_id is not None and p["id"] != viewer_id):
+            copy["hole"] = []
+        copy.pop("token", None)
+        copy.pop("accountId", None)
+        players.append(copy)
+    public = dict(state)
+    public["players"] = players
+    public["chatEvents"] = state.get("chatEvents") or []
+    public["nextChatEventId"] = state.get("nextChatEventId") or 1
+    return public
 
 
-# ---------- 房间 API ----------
+def find_player(state, account, token):
+    return next(
+        (p for p in state["players"]
+         if (p.get("accountId") == account["id"] if account else p.get("token") == token)),
+        None,
+    )
+
 
 @app.route("/api/room", methods=["GET"])
 def room_get():
     try:
         ensure_schema()
         code = _clean_code(request.args.get("code"))
+        viewer_id = request.args.get("viewerId") or None
+        spectator_id = request.args.get("spectatorId") or None
+        is_spectator = bool(spectator_id)
         room = _load_room(code)
-        if game.resolve_afk_turns(room["state"], now_ms()):
-            room["version"] = _save_room(code, room["state"], room["version"])
-            get_db().commit()
-        return _json_response({"code": code, "version": room["version"], "state": _public_state(room["state"])})
+        return _json_response({
+            "code": code, "version": room["version"],
+            "state": public_poker_state(room["state"], viewer_id, is_spectator),
+        })
     except ValueError as error:
         return _json_response({"error": str(error)}, 404)
 
@@ -186,7 +184,9 @@ def room_post():
             max_players = _clamp_max_players(body.get("maxPlayers"))
             for _ in range(5):
                 code = _random_code()
-                state = game.create_lobby(name, max_players, token or secrets.token_urlsafe(24), profile)
+                state = poker.create_poker_lobby(name, max_players, token or secrets.token_urlsafe(24), profile)
+                state["chatEvents"] = []
+                state["nextChatEventId"] = 1
                 cursor = db.execute(
                     "INSERT OR IGNORE INTO rooms (code, state, version, updated_at) VALUES (?, ?, 1, ?)",
                     (code, json.dumps(state, ensure_ascii=False), now_ms()),
@@ -197,106 +197,81 @@ def room_post():
                         "code": code, "version": 1,
                         "token": state["players"][0]["token"],
                         "playerId": state["players"][0]["id"],
-                        "state": _public_state(state),
+                        "state": public_poker_state(state, state["players"][0]["id"], False),
                     })
             raise ValueError("暂时无法创建房间，请重试")
 
         code = _clean_code(body.get("code"))
         room = _load_room(code)
         state = room["state"]
-
-        # 找出请求者（若有），若本人正处于 AI 代管，先恢复真人控制
-        requester = next(
-            (candidate for candidate in state["players"]
-             if (candidate.get("accountId") == account["id"] if account else candidate.get("token") == token)),
-            None,
-        )
-        requester_had_afk = requester is not None and (requester.get("isBot") or "afkSince" in requester)
-        if requester_had_afk:
-            requester.pop("isBot", None)
-            requester.pop("botDifficulty", None)
-            requester.pop("afkSince", None)
-            if state["players"].index(requester) == state["currentPlayer"] and state["status"] == "playing":
-                state["currentTurnStartedAt"] = now_ms()
-
-        # 挂机处理：轮到真人超过 40s 未操作 → AI 代管
-        game.resolve_afk_turns(state, now_ms())
+        requester = find_player(state, account, token)
 
         if command == "join":
             if not name:
                 raise ValueError("请输入昵称")
             join_token = token or secrets.token_urlsafe(24)
             if requester is not None:
-                # 重新加入：回到自己的席位，恢复真人控制
                 if account:
                     requester["name"] = account["nickname"]
                     requester["avatar"] = account["avatar"]
                 joined = requester
-                if requester_had_afk or account:
-                    version = _save_room(code, state, room["version"])
-                else:
-                    version = room["version"]
-            elif state["status"] == "lobby":
-                game.add_player(state, name, join_token, profile)
+                version = room["version"] if not account else _save_room(code, state, room["version"])
+            else:
+                poker.add_poker_player(state, name, join_token, profile)
                 joined = state["players"][-1]
                 version = _save_room(code, state, room["version"])
-            elif state["status"] == "playing":
-                seat = _find_ai_seat(state)
-                if seat is None:
-                    raise ValueError("游戏进行中，暂时没有可接替的席位")
-                state["log"].append(f"{name} 加入了商队，接替了 AI 席位")
-                seat["name"] = name
-                seat["token"] = join_token
-                seat["accountId"] = account["id"] if account else None
-                seat["avatar"] = account["avatar"] if account else None
-                seat.pop("isBot", None)
-                seat.pop("botDifficulty", None)
-                seat.pop("afkSince", None)
-                joined = seat
-                if state["players"].index(joined) == state["currentPlayer"]:
-                    state["currentTurnStartedAt"] = now_ms()
-                version = _save_room(code, state, room["version"])
-            else:
-                raise ValueError("游戏已结束，无法加入")
             db.commit()
             return _json_response({
                 "code": code, "version": version,
                 "token": joined.get("token") or join_token,
                 "playerId": joined["id"],
-                "state": _public_state(state),
+                "state": public_poker_state(state, joined["id"], False),
             })
 
-        if requester is None:
-            raise ValueError("玩家身份已失效，请重新加入")
-        player = requester
-        if account:
-            player["name"] = account["nickname"]
-            player["avatar"] = account["avatar"]
-
         if command == "addBot":
-            if player["id"] != room["state"]["hostId"]:
+            if not requester or requester["id"] != state["hostId"]:
                 raise ValueError("只有房主可以添加人机")
-            game.add_bot(room["state"], body.get("difficulty") or "normal")
+            poker.add_poker_bot(state, str(body.get("difficulty") or "normal"))
         elif command == "removeBot":
-            if player["id"] != room["state"]["hostId"]:
+            if not requester or requester["id"] != state["hostId"]:
                 raise ValueError("只有房主可以移除人机")
-            game.remove_bot(room["state"], str(body.get("botId") or ""))
+            poker.remove_poker_bot(state, str(body.get("botId") or ""))
         elif command == "start":
-            if player["id"] != room["state"]["hostId"]:
+            if not requester or requester["id"] != state["hostId"]:
                 raise ValueError("只有房主可以开始")
-            game.start_game(room["state"])
-            game.run_bot_turns(room["state"])
+            poker.start_hand(state)
+            poker.run_poker_bot_turns(state)
         elif command == "action" and body.get("action"):
-            game.apply_game_action(room["state"], player["id"], body["action"])
-            game.run_bot_turns(room["state"])
+            if not requester:
+                raise ValueError("玩家身份已失效，请重新加入")
+            poker.apply_poker_action(state, requester["id"], body["action"])
+            poker.run_poker_bot_turns(state)
         elif command == "chat" and body.get("phrase"):
-            game.send_chat(room["state"], player["id"], body["phrase"])
+            if not requester:
+                raise ValueError("玩家身份已失效，请重新加入")
+            phrase = str(body.get("phrase") or "")
+            if phrase not in CHAT_PHRASES:
+                raise ValueError("这条语音不存在")
+            events = state.get("chatEvents") or []
+            event_id = state.get("nextChatEventId") or (events[-1]["id"] + 1 if events else 1)
+            events.append({"id": event_id, "playerId": requester["id"], "playerName": requester["name"], "playerColor": requester["color"], "phrase": phrase})
+            state["chatEvents"] = events[-20:]
+            state["nextChatEventId"] = event_id + 1
+        elif command == "spectate":
+            spectator_id = str(body.get("spectatorId") or "").strip() or secrets.token_urlsafe(12)
+            poker.add_spectator(state, name or "观众", spectator_id)
+            db.commit()
+            version = _save_room(code, state, room["version"])
+            return _json_response({"code": code, "version": version, "spectatorId": spectator_id, "state": public_poker_state(state, None, True)})
+        elif command == "unspectate":
+            poker.remove_spectator(state, str(body.get("spectatorId") or ""))
         else:
             raise ValueError("未知操作")
 
-        version = _save_room(code, room["state"], room["version"])
+        version = _save_room(code, state, room["version"])
         db.commit()
-        return _json_response({"code": code, "version": version, "state": _public_state(room["state"])})
+        viewer_id = requester["id"] if requester else None
+        return _json_response({"code": code, "version": version, "state": public_poker_state(state, viewer_id, False)})
     except ValueError as error:
         try:
             get_db().rollback()
@@ -310,8 +285,6 @@ def room_post():
             pass
         return _json_response({"error": str(error)}, 500)
 
-
-# ---------- 账号 API ----------
 
 @app.route("/api/auth", methods=["GET"])
 def auth_get():
@@ -331,7 +304,6 @@ def auth_post():
         body = request.get_json(silent=True) or {}
         action = body.get("action")
         secure = _is_secure()
-
         if action == "register":
             username = accounts.normalize_username(body.get("username"))
             password = str(body.get("password") or "")
@@ -343,7 +315,6 @@ def auth_post():
             response = _json_response({"user": user})
             response.headers["Set-Cookie"] = accounts.session_cookie(token, secure)
             return response
-
         if action == "login":
             user = accounts.verify_account(db, accounts.normalize_username(body.get("username")), str(body.get("password") or ""))
             token = accounts.create_account_session(db, user["id"])
@@ -351,14 +322,12 @@ def auth_post():
             response = _json_response({"user": user})
             response.headers["Set-Cookie"] = accounts.session_cookie(token, secure)
             return response
-
         if action == "logout":
             accounts.delete_account_session(db, request.headers.get("Cookie"))
             db.commit()
             response = _json_response({"user": None})
             response.headers["Set-Cookie"] = accounts.expired_session_cookie(secure)
             return response
-
         if action == "avatar":
             user = accounts.get_account_from_request(db, request.headers.get("Cookie"))
             if not user:
@@ -366,7 +335,6 @@ def auth_post():
             avatar = accounts.update_account_avatar(db, user["id"], body.get("avatar"))
             db.commit()
             return _json_response({"user": {**user, "avatar": avatar}})
-
         raise ValueError("未知账号操作")
     except ValueError as error:
         try:
@@ -382,8 +350,6 @@ def auth_post():
         return _json_response({"error": str(error)}, 500)
 
 
-# ---------- 静态前端 ----------
-
 @app.route("/")
 def index():
     return send_from_directory(STATIC_DIR, "index.html")
@@ -396,50 +362,8 @@ def static_files(filename):
     return send_from_directory(STATIC_DIR, filename)
 
 
-# ---------- 德州扑克子应用挂载（/poker/）----------
-# 部署包内含 poker/ 子目录时，把 /poker 前缀的请求交给德州扑克，其余仍由香料商路处理。
-
-
-class _PrefixDispatcher:
-    """把指定前缀的请求交给子应用，其余交给主应用；/poker 自动 301 到 /poker/。"""
-
-    def __init__(self, default_app, prefix, sub_app):
-        self.default_app = default_app
-        self.prefix = prefix
-        self.sub_app = sub_app
-
-    def __call__(self, environ, start_response):
-        path = environ.get("PATH_INFO", "")
-        if path == self.prefix:
-            start_response("301 Moved Permanently", [("Location", self.prefix + "/"), ("Content-Length", "0")])
-            return [b""]
-        if path.startswith(self.prefix + "/"):
-            environ["SCRIPT_NAME"] = environ.get("SCRIPT_NAME", "") + self.prefix
-            environ["PATH_INFO"] = path[len(self.prefix):]
-            return self.sub_app(environ, start_response)
-        return self.default_app(environ, start_response)
-
-
-def _mount_poker():
-    try:
-        from poker.app import app as poker_app
-        return _PrefixDispatcher(app, "/poker", poker_app)
-    except Exception as exc:  # 德州扑克未部署时不影响香料商路
-        print(f"[poker] 子应用挂载失败，已跳过：{exc}")
-        return app
-
-
-application = _mount_poker()
-
-
 if __name__ == "__main__":
     with app.app_context():
         ensure_schema()
-    print(f"香料商路 local server -> http://127.0.0.1:5000  (db: {DB_PATH})")
-    if application is not app:
-        from werkzeug.serving import run_simple
-        print("已挂载德州扑克子应用：http://127.0.0.1:5000/poker/")
-        run_simple("127.0.0.1", 5000, application, use_debugger=False, use_reloader=False)
-    else:
-        app.run(host="127.0.0.1", port=5000, debug=False)
-
+    print(f"德州扑克 local server -> http://127.0.0.1:5001  (db: {DB_PATH})")
+    app.run(host="127.0.0.1", port=5001, debug=False)

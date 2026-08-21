@@ -60,3 +60,22 @@ python test_engine.py  # 游戏引擎测试（39 项，含完整对局）
 - 部署地址变成 `https://<用户名>.pythonanywhere.com/`，不再是原来的 chatgpt.site 域名。
 - 房间和账号数据存在 PythonAnywhere 的 SQLite 里，和原站数据互不相通（全新开始）。
 - 用哪个托管，就分享哪个链接给朋友。
+
+## 🃏 德州扑克子应用（/poker/）
+
+本部署包还包含 `poker/` 子目录，挂载了「德州风云」德州扑克（见 GitHub 仓库
+`TianhaoWu66/texas-holdem-online`）。访问地址：
+
+```
+https://<用户名>.pythonanywhere.com/poker/
+```
+
+- 挂载逻辑写在 `app.py` 末尾的 `_PrefixDispatcher`：`/poker` 前缀交给
+  `poker.app`（自动把 `/poker` 301 到 `/poker/`），其余仍由香料商路处理。
+- `poker/` 使用独立的 SQLite 数据库（`poker/site.db`）和独立的会话 cookie
+  （`poker_session`），与香料商路互不干扰。
+- 更新德州扑克前端：在 `texas-holdem-online` 仓库执行
+  `VITE_BASE=/poker/ npm run build`，把生成的 `pythonanywhere/static/` 内容
+  覆盖到本包的 `poker/static/`，再重新上传 `poker/` 并 Reload。
+- WSGI 入口从 `from app import app as application` 改为 `from app import application`
+  （`application` 是挂载了扑克子应用的 WSGI 对象）。

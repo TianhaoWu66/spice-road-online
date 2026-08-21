@@ -44,5 +44,7 @@ yarn-error.log*
 # pythonanywhere deployment artifacts
 /pythonanywhere/static/
 /pythonanywhere/__pycache__/
+/pythonanywhere/poker/static/
+/pythonanywhere/poker/__pycache__/
 *.db
 *.zip
