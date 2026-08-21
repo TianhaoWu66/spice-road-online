@@ -346,6 +346,22 @@ function AirplaneInviteModal({ host, onClose }: { host: AirplaneHost; onClose: (
   );
 }
 
+function PlayedCardsModal({ cards, onClose }: { cards: string[]; onClose: () => void }) {
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
+      <section className="played-modal" role="dialog" aria-modal="true" aria-labelledby="played-modal-title">
+        <button className="close" aria-label="关闭" onClick={onClose}>×</button>
+        <p className="eyebrow">我的商队</p>
+        <h2 id="played-modal-title">已打出的牌（{cards.length}）</h2>
+        {cards.length
+          ? <div className="played-grid">{cards.map((cardId) => <div className={`merchant-card played-card card-${MERCHANT_CARDS[cardId].type}`} key={cardId}><MerchantFace card={MERCHANT_CARDS[cardId]} /></div>)}</div>
+          : <p className="empty-hand">还没有打出的牌</p>}
+        <button className="primary wide" onClick={onClose}>知道了</button>
+      </section>
+    </div>
+  );
+}
+
 function ThemeSwitcher({ value, onChange }: { value: VisualTheme; onChange: (value: VisualTheme) => void }) {
   return <div className="theme-switcher" aria-label="卡牌风格">
     {(Object.keys(themeLabels) as VisualTheme[]).map((theme) => <button aria-pressed={value === theme} title={`${themeLabels[theme]}风格`} key={theme} onClick={() => onChange(theme)}><i />{themeLabels[theme]}</button>)}
@@ -463,6 +479,7 @@ export default function Game() {
   const [scannerFor, setScannerFor] = useState<"offer" | null>(null);
   const [showInvite, setShowInvite] = useState(false);
   const [guestQrFullscreen, setGuestQrFullscreen] = useState(false);
+  const [showPlayed, setShowPlayed] = useState(false);
   const observedEventId = useRef<number | null>(null);
   const observedRoomCode = useRef<string | null>(null);
   const observedChatId = useRef<number | null>(null);
@@ -1005,6 +1022,7 @@ export default function Game() {
         {!me.hand.length && <div className="empty-hand">手牌已全部打出</div>}
       </div>
       <button className="rest-button" disabled={!isMyTurn || !me.played.length} onClick={() => sendAction({ type: "REST" })}><span>☾</span>休息并收回 {me.played.length} 张牌</button>
+      <button className="played-btn" onClick={() => setShowPlayed(true)}>📜 已打出的牌{me.played.length ? `（${me.played.length}）` : ""}</button>
     </section>
     {error && <div className="toast" onClick={() => setError("")}>{error}</div>}
     {activeEvent && <ActionReveal key={activeEvent.id} event={activeEvent} />}
@@ -1014,6 +1032,7 @@ export default function Game() {
       <button className="primary" onClick={goHome}>返回首页</button>
     </section></div>}
     {showInvite && airplane?.role === "host" && airplane.host && <AirplaneInviteModal host={airplane.host} onClose={() => setShowInvite(false)} />}
+    {showPlayed && <PlayedCardsModal cards={me.played} onClose={() => setShowPlayed(false)} />}
   </main>;
 }
 
